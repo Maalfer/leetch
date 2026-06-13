@@ -35,25 +35,62 @@ def _read_exact(sock: socket.socket, buffer: bytes, n: int) -> bytes:
 
 
 def _read_chunked(sock: socket.socket, buffer: bytes) -> bytes:
-    """Lee un cuerpo con Transfer-Encoding: chunked. Devuelve los bytes crudos
-    (incluyendo los marcadores de chunk, tal cual viajan por el cable)."""
-    data = buffer
+    """Lee un cuerpo con Transfer-Encoding: chunked.
+
+    Devuelve los bytes crudos (marcadores + datos) tal cual viajan por el cable.
+    Usa 'pending' como ventana deslizante para avanzar chunk a chunk; 'out'
+    acumula el resultado. Así nunca reprocesa el mismo size-line.
+    """
+    out = b""
+    pending = buffer
+
     while True:
-        while b"\r\n" not in data:
-            chunk = sock.recv(4096)
-            if not chunk:
-                return data
-            data += chunk
-        size_line, rest = data.split(b"\r\n", 1)
+        # Esperar la línea de tamaño del próximo chunk
+        while b"\r\n" not in pending:
+            try:
+                more = sock.recv(4096)
+            except OSError:
+                return out + pending
+            if not more:
+                return out + pending
+            pending += more
+
+        size_line, pending = pending.split(b"\r\n", 1)
         try:
             size = int(size_line.split(b";")[0].strip(), 16)
         except ValueError:
-            return data
+            return out + size_line + b"\r\n" + pending
+
+        out += size_line + b"\r\n"
+
         if size == 0:
-            data = _read_exact(sock, data, len(data) - len(rest) + 2)
-            return data
-        needed = len(data) - len(rest) + size + 2
-        data = _read_exact(sock, data, needed)
+            # Chunk final: leer el \r\n de cierre
+            while len(pending) < 2:
+                try:
+                    more = sock.recv(4096)
+                except OSError:
+                    break
+                if not more:
+                    break
+                pending += more
+            out += pending[:2]
+            return out
+
+        # Leer los bytes del chunk + \r\n terminador y avanzar
+        needed = size + 2
+        while len(pending) < needed:
+            try:
+                more = sock.recv(4096)
+            except OSError:
+                out += pending
+                return out
+            if not more:
+                out += pending
+                return out
+            pending += more
+
+        out += pending[:needed]
+        pending = pending[needed:]   # avanzar al siguiente chunk
 
 
 def read_http_message(sock: socket.socket) -> bytes:
