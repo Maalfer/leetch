@@ -5,15 +5,17 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QPushButton, QLabel, QPlainTextEdit, QCheckBox, QSpinBox, QLineEdit,
-    QMessageBox,
+    QMessageBox, QMenu,
 )
 
 from net.http_client import send_raw_request
 from net import http_message as hm
-from ui.style import MONO, decode
+from ui.style import MONO, decode, decode_http
+from ui.highlighter import HTTPHighlighter
 
 
 class RepeaterWorker(QObject):
@@ -22,6 +24,8 @@ class RepeaterWorker(QObject):
 
 
 class RepeaterTab(QWidget):
+    send_to_tool = Signal(str, str, int, bool, bytes)  # (tool, host, port, use_tls, raw)
+
     def __init__(self, worker: RepeaterWorker, host="", port=80, use_tls=False,
                  raw=b""):
         super().__init__()
@@ -76,6 +80,9 @@ class RepeaterTab(QWidget):
         self.request_edit.setPlainText(decode(raw))
         self.request_edit.setAccessibleName("Petición HTTP cruda")
         self.request_edit.setToolTip("Edita aquí la petición HTTP cruda antes de enviarla")
+        self.request_edit.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.request_edit.customContextMenuRequested.connect(self._show_request_menu)
+        HTTPHighlighter(self.request_edit.document())
         req_layout.addWidget(self.request_edit)
         splitter.addWidget(req_box)
 
@@ -91,6 +98,7 @@ class RepeaterTab(QWidget):
         self.response_view.setReadOnly(True)
         self.response_view.setAccessibleName("Respuesta HTTP")
         self.response_view.setToolTip("Respuesta cruda recibida del destino")
+        HTTPHighlighter(self.response_view.document())
         resp_layout.addWidget(self.response_view)
         splitter.addWidget(resp_box)
 
@@ -102,6 +110,28 @@ class RepeaterTab(QWidget):
         self.setTabOrder(self.tls_check, self.send_btn)
         self.setTabOrder(self.send_btn, self.request_edit)
         self.setTabOrder(self.request_edit, self.response_view)
+
+    def _show_request_menu(self, pos):
+        menu = self.request_edit.createStandardContextMenu()
+        menu.addSeparator()
+        fuzzer_menu = QMenu("Enviar a Tools ▶", menu)
+        for tool, label in [("fuzzing", "Fuzzing"), ("race", "Race Conditions"), ("jwt", "JWT Auditor")]:
+            act = QAction(label, fuzzer_menu)
+            act.triggered.connect(lambda checked=False, t=tool: self._emit_send_to(t))
+            fuzzer_menu.addAction(act)
+        menu.addMenu(fuzzer_menu)
+        menu.exec(self.request_edit.viewport().mapToGlobal(pos))
+
+    def _emit_send_to(self, tool: str):
+        raw_text = self.request_edit.toPlainText()
+        raw = raw_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8", "replace")
+        self.send_to_tool.emit(
+            tool,
+            self.host_edit.text().strip(),
+            self.port_spin.value(),
+            self.tls_check.isChecked(),
+            raw,
+        )
 
     def send(self):
         raw_text = self.request_edit.toPlainText()
@@ -134,7 +164,7 @@ class RepeaterTab(QWidget):
         self.resp_label.setText(
             f"Respuesta — {status}  ·  {len(resp)} bytes  ·  {elapsed*1000:.0f} ms"
         )
-        self.response_view.setPlainText(decode(resp))
+        self.response_view.setPlainText(decode_http(resp))
 
     @Slot(str)
     def on_error(self, message: str):

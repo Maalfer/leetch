@@ -1,9 +1,9 @@
-"""(De)serialización de la sesión de MiniBurp.
+"""(De)serialización de la sesión de Leech.
 
 Formato del archivo (JSON):
 
     {
-        "format": "miniburp_session",
+        "format": "leech_session",
         "version": 1,
         "proxy": {"listen_host": "127.0.0.1", "listen_port": 8080},
         "flows": [ { ... }, ... ],
@@ -17,7 +17,7 @@ import json
 
 from proxy.flow import Flow
 
-SESSION_FORMAT = "miniburp_session"
+SESSION_FORMAT = "leech_session"
 SESSION_VERSION = 1
 
 
@@ -42,6 +42,8 @@ def _flow_to_dict(flow: Flow) -> dict:
         "status": flow.status,
         "use_tls": flow.use_tls,
         "timestamp": flow.timestamp,
+        "label": flow.label,
+        "comment": flow.comment,
         "raw_request": _b64encode(flow.raw_request),
         "raw_response": _b64encode(flow.raw_response),
     }
@@ -60,6 +62,8 @@ def _flow_from_dict(d: dict) -> Flow:
         status=d.get("status", ""),
         use_tls=bool(d.get("use_tls", False)),
         timestamp=float(d.get("timestamp", 0.0)),
+        label=d.get("label", ""),
+        comment=d.get("comment", ""),
     )
 
 
@@ -96,7 +100,7 @@ def restore_session(window, data: dict) -> None:
     if not isinstance(data, dict):
         raise ValueError("El archivo no contiene una sesión válida.")
     if data.get("format") != SESSION_FORMAT:
-        raise ValueError("El archivo no es una sesión de MiniBurp.")
+        raise ValueError("El archivo no es una sesión de Leech.")
     version = data.get("version")
     if version != SESSION_VERSION:
         raise ValueError(f"Versión de sesión no soportada: {version!r}.")
@@ -115,6 +119,8 @@ def restore_session(window, data: dict) -> None:
     window.flows.clear()
     window._flow_by_id.clear()
     window.table.setRowCount(0)
+    if hasattr(window, "sitemap_tab"):
+        window.sitemap_tab.clear()
     for fd in data.get("flows", []) or []:
         window.add_flow(_flow_from_dict(fd))
 

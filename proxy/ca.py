@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-_CA_DIR = os.path.join(os.path.expanduser("~"), ".miniburp")
+_CA_DIR = os.path.join(os.path.expanduser("~"), ".leech")
 CA_CERT_FILE = os.path.join(_CA_DIR, "ca.crt")
 _CA_KEY_FILE = os.path.join(_CA_DIR, "ca.key")
 _CERT_DIR = os.path.join(_CA_DIR, "certs")
@@ -29,8 +29,8 @@ def ensure_ca():
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "MiniBurp CA"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "MiniBurp"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "Leech CA"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Leech"),
     ])
     now = datetime.datetime.utcnow()
     cert = (

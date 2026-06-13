@@ -1,32 +1,33 @@
-"""Pestaña Fuzzer para MiniBurp.
-
-Permite marcar una región de la petición con §marcador§, cargar una wordlist
-y lanzar un ataque de fuzzing/bruteforce. Muestra los resultados en una tabla
-con soporte de filtros por código de estado y longitud.
-"""
+"""Módulo Fuzzer: contenedor con herramientas Fuzzing, Race Conditions y JWT."""
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import re
 import threading
 import time
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTabWidget,
     QPushButton, QLabel, QPlainTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QLineEdit, QSpinBox, QCheckBox,
-    QFileDialog, QMessageBox, QFrame, QProgressBar,
+    QFileDialog, QMessageBox, QFrame, QProgressBar, QComboBox, QMenu,
 )
 
 from net.http_client import send_raw_request
-from ui.style import MONO, TEXT_DIM
+from ui.style import MONO, TEXT_DIM, decode
+from ui.highlighter import HTTPHighlighter, JSONHighlighter
 
 MARKER = "§"
 
 _GREEN = "#5fd38a"
-_CYAN = "#4fc3d6"
+_CYAN  = "#4fc3d6"
 _AMBER = "#ffb454"
-_RED = "#ff6b6b"
+_RED   = "#ff6b6b"
 
 
 def _status_color(code: str) -> QColor | None:
@@ -34,35 +35,58 @@ def _status_color(code: str) -> QColor | None:
     if not s[:1].isdigit():
         return None
     c = s[0]
-    if c == "2":
-        return QColor(_GREEN)
-    if c == "3":
-        return QColor(_CYAN)
-    if c == "4":
-        return QColor(_AMBER)
-    if c == "5":
-        return QColor(_RED)
+    if c == "2": return QColor(_GREEN)
+    if c == "3": return QColor(_CYAN)
+    if c == "4": return QColor(_AMBER)
+    if c == "5": return QColor(_RED)
     return QColor(TEXT_DIM)
 
 
-class FuzzWorker(QObject):
-    result = Signal(int, str, str, int, float)   # (index, payload, status, length, ms)
+# ─────────────────────────────────────────────── helpers JWT ──
+def _b64url_decode(s: str) -> bytes:
+    s = s.replace("-", "+").replace("_", "/")
+    s += "=" * (-len(s) % 4)
+    return base64.b64decode(s)
+
+
+def _verify_hs(hdr_b64: str, pay_b64: str, sig_b64: str, secret: str, alg: str) -> bool:
+    fn = {"HS256": hashlib.sha256, "HS384": hashlib.sha384, "HS512": hashlib.sha512}.get(alg)
+    if fn is None:
+        return False
+    msg = f"{hdr_b64}.{pay_b64}".encode()
+    try:
+        sig = _b64url_decode(sig_b64)
+    except Exception:
+        return False
+    expected = hmac.new(secret.encode("utf-8", "replace"), msg, fn).digest()
+    return hmac.compare_digest(sig, expected)
+
+
+def _extract_jwt(text: str) -> str | None:
+    m = re.search(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', text)
+    return m.group(0) if m else None
+
+
+# ══════════════════════════════════════════════════════════════
+# Fuzzing
+# ══════════════════════════════════════════════════════════════
+class _FuzzWorker(QObject):
+    result   = Signal(int, str, str, int, float)
     finished = Signal()
-    progress = Signal(int, int)                   # (done, total)
+    progress = Signal(int, int)
 
 
-class FuzzerTab(QWidget):
-    """Pestaña completa del Fuzzer."""
-
+class FuzzingTab(QWidget):
     def __init__(self):
         super().__init__()
         self._running = False
         self._thread: threading.Thread | None = None
-        self._worker = FuzzWorker()
+        self._worker = _FuzzWorker()
         self._worker.result.connect(self._on_result)
         self._worker.finished.connect(self._on_finished)
         self._worker.progress.connect(self._on_progress)
         self._results: list[dict] = []
+        self._wordlist: list[str] = []
         self._build_ui()
 
     def _build_ui(self):
@@ -70,166 +94,113 @@ class FuzzerTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        # Fila superior: host / puerto / TLS / controles
         top = QHBoxLayout()
         top.setSpacing(8)
-
         top.addWidget(QLabel("Host:"))
         self.host_edit = QLineEdit()
         self.host_edit.setPlaceholderText("ejemplo.com")
-        self.host_edit.setToolTip("Host de destino")
         self.host_edit.setAccessibleName("Host de destino del fuzzer")
         top.addWidget(self.host_edit, 3)
-
         top.addWidget(QLabel("Puerto:"))
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(80)
-        self.port_spin.setToolTip("Puerto de destino")
         self.port_spin.setAccessibleName("Puerto de destino del fuzzer")
         top.addWidget(self.port_spin)
-
         self.tls_check = QCheckBox("HTTPS")
-        self.tls_check.setToolTip("Usa TLS/HTTPS")
-        self.tls_check.setAccessibleName("Usar HTTPS en el fuzzer")
-        self.tls_check.toggled.connect(
-            lambda on: self.port_spin.setValue(443 if on else 80))
+        self.tls_check.toggled.connect(lambda on: self.port_spin.setValue(443 if on else 80))
         top.addWidget(self.tls_check)
-
         top.addWidget(QLabel("Hilos:"))
         self.threads_spin = QSpinBox()
         self.threads_spin.setRange(1, 50)
         self.threads_spin.setValue(10)
-        self.threads_spin.setToolTip("Peticiones simultáneas (1–50)")
-        self.threads_spin.setAccessibleName("Número de hilos concurrentes")
         top.addWidget(self.threads_spin)
-
         self.start_btn = QPushButton("▶  Iniciar")
         self.start_btn.setObjectName("primaryButton")
-        self.start_btn.setToolTip("Lanza el ataque de fuzzing")
-        self.start_btn.setAccessibleName("Iniciar o detener el ataque de fuzzing")
         self.start_btn.clicked.connect(self.toggle_attack)
         top.addWidget(self.start_btn)
-
         self.clear_btn = QPushButton("Limpiar")
-        self.clear_btn.setToolTip("Borra los resultados")
-        self.clear_btn.setAccessibleName("Limpiar resultados del fuzzer")
         self.clear_btn.clicked.connect(self._clear_results)
         top.addWidget(self.clear_btn)
-
         root.addLayout(top)
 
-        # Barra de progreso
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%v / %m  (%p%)")
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(14)
-        self.progress_bar.setAccessibleName("Progreso del ataque de fuzzing")
         root.addWidget(self.progress_bar)
 
-        # Splitter: petición | resultados
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(8)
 
-        # Panel izquierdo: petición + wordlist
         left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-
-        req_label = QLabel("Petición  —  marca la zona a fuzzear con  §…§")
-        req_label.setObjectName("paneCaption")
-        left_layout.addWidget(req_label)
-
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(8)
+        lbl = QLabel("Petición  —  marca la zona a fuzzear con  §…§")
+        lbl.setObjectName("paneCaption")
+        ll.addWidget(lbl)
         self.request_edit = QPlainTextEdit()
         self.request_edit.setFont(MONO)
         self.request_edit.setPlaceholderText(
             "GET /login?user=§admin§ HTTP/1.1\r\nHost: ejemplo.com\r\n\r\n")
-        self.request_edit.setToolTip(
-            "Escribe la petición HTTP. Rodea el valor a fuzzear con § … §")
-        self.request_edit.setAccessibleName("Plantilla de petición HTTP con marcadores")
-        left_layout.addWidget(self.request_edit, 3)
-
-        wl_caption = QLabel("Wordlist")
-        wl_caption.setObjectName("paneCaption")
-        left_layout.addWidget(wl_caption)
-
+        self.request_edit.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.request_edit.customContextMenuRequested.connect(self._show_request_menu)
+        HTTPHighlighter(self.request_edit.document())
+        ll.addWidget(self.request_edit, 3)
+        wl_lbl = QLabel("Wordlist")
+        wl_lbl.setObjectName("paneCaption")
+        ll.addWidget(wl_lbl)
         wl_row = QHBoxLayout()
         self.wl_path_edit = QLineEdit()
         self.wl_path_edit.setReadOnly(True)
         self.wl_path_edit.setPlaceholderText("Sin wordlist cargada")
-        self.wl_path_edit.setToolTip("Ruta del archivo de wordlist")
-        self.wl_path_edit.setAccessibleName("Ruta del archivo wordlist")
         wl_row.addWidget(self.wl_path_edit)
         self.wl_btn = QPushButton("Cargar…")
-        self.wl_btn.setToolTip("Selecciona un archivo de wordlist (una palabra por línea)")
-        self.wl_btn.setAccessibleName("Cargar archivo wordlist")
         self.wl_btn.clicked.connect(self._load_wordlist)
         wl_row.addWidget(self.wl_btn)
-        left_layout.addLayout(wl_row)
-
+        ll.addLayout(wl_row)
         self.wl_count_label = QLabel("0 entradas cargadas")
         self.wl_count_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
-        left_layout.addWidget(self.wl_count_label)
-
-        self._wordlist: list[str] = []
-
+        ll.addWidget(self.wl_count_label)
         main_split.addWidget(left)
 
-        # Panel derecho: filtros + tabla de resultados
         right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(6)
         filter_frame = QFrame()
         filter_frame.setObjectName("controlBar")
         filter_row = QHBoxLayout(filter_frame)
         filter_row.setContentsMargins(8, 6, 8, 6)
         filter_row.setSpacing(8)
-
         filter_row.addWidget(QLabel("Filtros:"))
-
         filter_row.addWidget(QLabel("Código:"))
         self.filter_code = QLineEdit()
         self.filter_code.setPlaceholderText("200,301…  o  !404")
         self.filter_code.setMaximumWidth(130)
-        self.filter_code.setToolTip(
-            "Muestra solo estos códigos (200,301) o excluye con ! (!404)")
-        self.filter_code.setAccessibleName("Filtro por código de estado HTTP")
         self.filter_code.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.filter_code)
-
         filter_row.addWidget(QLabel("Long. ≠"))
         self.filter_len = QLineEdit()
         self.filter_len.setPlaceholderText("excluir bytes")
         self.filter_len.setMaximumWidth(110)
-        self.filter_len.setToolTip("Oculta respuestas con exactamente este número de bytes")
-        self.filter_len.setAccessibleName("Filtro por longitud de respuesta a excluir")
         self.filter_len.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.filter_len)
-
         filter_row.addWidget(QLabel("Texto:"))
         self.filter_text = QLineEdit()
         self.filter_text.setPlaceholderText("contiene…")
         self.filter_text.setMaximumWidth(130)
-        self.filter_text.setToolTip("Muestra solo resultados cuyo payload contiene este texto")
-        self.filter_text.setAccessibleName("Filtro por texto en payload")
         self.filter_text.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.filter_text)
-
         filter_row.addStretch()
         self.result_count_label = QLabel("0 resultados")
         self.result_count_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         filter_row.addWidget(self.result_count_label)
-
-        right_layout.addWidget(filter_frame)
-
+        rl.addWidget(filter_frame)
         self.result_table = QTableWidget(0, 5)
-        self.result_table.setHorizontalHeaderLabels(
-            ["#", "Payload", "Código", "Longitud", "ms"])
-        self.result_table.setAccessibleName("Tabla de resultados del fuzzer")
+        self.result_table.setHorizontalHeaderLabels(["#", "Payload", "Código", "Longitud", "ms"])
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -244,16 +215,27 @@ class FuzzerTab(QWidget):
         self.result_table.setColumnWidth(2, 70)
         self.result_table.setColumnWidth(3, 90)
         self.result_table.setColumnWidth(4, 70)
-        right_layout.addWidget(self.result_table)
-
+        rl.addWidget(self.result_table)
         main_split.addWidget(right)
         main_split.setSizes([420, 700])
-
         root.addWidget(main_split, 1)
 
-    # ------------------------------------------------------------------ #
-    # Wordlist
-    # ------------------------------------------------------------------ #
+    def _show_request_menu(self, pos):
+        menu = self.request_edit.createStandardContextMenu()
+        cursor = self.request_edit.textCursor()
+        if cursor.hasSelection():
+            menu.addSeparator()
+            from PySide6.QtGui import QAction as _QAction
+            act = _QAction("Añadir Posicionador  §…§", menu)
+            act.triggered.connect(self._add_marker)
+            menu.addAction(act)
+        menu.exec(self.request_edit.viewport().mapToGlobal(pos))
+
+    def _add_marker(self):
+        cursor = self.request_edit.textCursor()
+        if cursor.hasSelection():
+            cursor.insertText(f"§{cursor.selectedText()}§")
+
     def _load_wordlist(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Cargar wordlist", "", "Texto (*.txt);;Todos (*)")
@@ -269,22 +251,15 @@ class FuzzerTab(QWidget):
         self.wl_path_edit.setText(path)
         self.wl_count_label.setText(f"{len(lines):,} entradas cargadas")
 
-    # ------------------------------------------------------------------ #
-    # Ataque
-    # ------------------------------------------------------------------ #
     def toggle_attack(self):
         if self._running:
             self._running = False
             self.start_btn.setText("▶  Iniciar")
-            self.start_btn.setObjectName("primaryButton")
             return
-
         template = self.request_edit.toPlainText()
         if template.count(MARKER) < 2:
-            QMessageBox.warning(
-                self, "Marcador faltante",
-                f"Rodea la zona a fuzzear con {MARKER}…{MARKER}\n"
-                f"Ejemplo:  GET /user/§admin§ HTTP/1.1")
+            QMessageBox.warning(self, "Marcador faltante",
+                f"Rodea la zona a fuzzear con {MARKER}…{MARKER}")
             return
         if not self._wordlist:
             QMessageBox.warning(self, "Wordlist vacía", "Carga una wordlist primero.")
@@ -293,41 +268,34 @@ class FuzzerTab(QWidget):
         if not host:
             QMessageBox.warning(self, "Host vacío", "Indica el host de destino.")
             return
-
         self._running = True
         self.start_btn.setText("■  Detener")
         self.progress_bar.setMaximum(len(self._wordlist))
         self.progress_bar.setValue(0)
-
         port = self.port_spin.value()
         use_tls = self.tls_check.isChecked()
         n_threads = self.threads_spin.value()
         wordlist = list(self._wordlist)
-
         first = template.index(MARKER)
         second = template.index(MARKER, first + 1)
         prefix = template[:first]
         suffix = template[second + 1:]
-
         self._thread = threading.Thread(
             target=self._run_attack,
             args=(prefix, suffix, wordlist, host, port, use_tls, n_threads),
-            daemon=True,
-        )
+            daemon=True)
         self._thread.start()
 
-    def _run_attack(self, prefix: str, suffix: str, wordlist: list[str],
-                    host: str, port: int, use_tls: bool, n_threads: int):
+    def _run_attack(self, prefix, suffix, wordlist, host, port, use_tls, n_threads):
         sem = threading.Semaphore(n_threads)
         lock = threading.Lock()
         done_count = [0]
         total = len(wordlist)
 
-        def send_one(idx: int, payload: str):
+        def send_one(idx, payload):
             if not self._running:
                 return
-            raw_text = prefix + payload + suffix
-            raw_text = raw_text.replace("\r\n", "\n").replace("\n", "\r\n")
+            raw_text = (prefix + payload + suffix).replace("\r\n", "\n").replace("\n", "\r\n")
             raw = raw_text.encode("utf-8", "replace")
             t0 = time.perf_counter()
             try:
@@ -343,7 +311,6 @@ class FuzzerTab(QWidget):
                 length = 0
             finally:
                 sem.release()
-
             self._worker.result.emit(idx, payload, status, length, elapsed)
             with lock:
                 done_count[0] += 1
@@ -357,19 +324,13 @@ class FuzzerTab(QWidget):
             t = threading.Thread(target=send_one, args=(idx, payload), daemon=True)
             t.start()
             threads.append(t)
-
         for t in threads:
             t.join()
-
         self._worker.finished.emit()
 
-    # ------------------------------------------------------------------ #
-    # Slots
-    # ------------------------------------------------------------------ #
     @Slot(int, str, str, int, float)
-    def _on_result(self, idx: int, payload: str, status: str, length: int, ms: float):
-        entry = {"idx": idx, "payload": payload, "status": status,
-                 "length": length, "ms": ms}
+    def _on_result(self, idx, payload, status, length, ms):
+        entry = {"idx": idx, "payload": payload, "status": status, "length": length, "ms": ms}
         self._results.append(entry)
         if self._matches_filters(entry):
             self._add_row(entry)
@@ -383,23 +344,14 @@ class FuzzerTab(QWidget):
         self.start_btn.style().polish(self.start_btn)
 
     @Slot(int, int)
-    def _on_progress(self, done: int, total: int):
+    def _on_progress(self, done, total):
         self.progress_bar.setValue(done)
 
-    # ------------------------------------------------------------------ #
-    # Tabla y filtros
-    # ------------------------------------------------------------------ #
-    def _add_row(self, entry: dict):
+    def _add_row(self, entry):
         row = self.result_table.rowCount()
         self.result_table.insertRow(row)
-        cells = [
-            str(entry["idx"] + 1),
-            entry["payload"],
-            entry["status"],
-            str(entry["length"]),
-            f"{entry['ms']:.0f}",
-        ]
-        for col, val in enumerate(cells):
+        for col, val in enumerate([str(entry["idx"] + 1), entry["payload"],
+                                    entry["status"], str(entry["length"]), f"{entry['ms']:.0f}"]):
             item = QTableWidgetItem(val)
             item.setData(Qt.UserRole, entry)
             if col == 2:
@@ -407,22 +359,18 @@ class FuzzerTab(QWidget):
                 if color:
                     item.setForeground(color)
             self.result_table.setItem(row, col, item)
-        self.result_count_label.setText(
-            f"{self.result_table.rowCount()} resultados")
+        self.result_count_label.setText(f"{self.result_table.rowCount()} resultados")
 
-    def _matches_filters(self, entry: dict) -> bool:
+    def _matches_filters(self, entry):
         code_filter = self.filter_code.text().strip()
         if code_filter:
             status = entry["status"]
             if code_filter.startswith("!"):
-                excluded = [c.strip() for c in code_filter[1:].split(",")]
-                if status in excluded:
+                if status in [c.strip() for c in code_filter[1:].split(",")]:
                     return False
             else:
-                allowed = [c.strip() for c in code_filter.split(",")]
-                if status not in allowed:
+                if status not in [c.strip() for c in code_filter.split(",")]:
                     return False
-
         len_filter = self.filter_len.text().strip()
         if len_filter:
             try:
@@ -430,11 +378,9 @@ class FuzzerTab(QWidget):
                     return False
             except ValueError:
                 pass
-
         text_filter = self.filter_text.text().strip()
         if text_filter and text_filter.lower() not in entry["payload"].lower():
             return False
-
         return True
 
     def _apply_filters(self):
@@ -449,14 +395,479 @@ class FuzzerTab(QWidget):
         self.progress_bar.setValue(0)
         self.result_count_label.setText("0 resultados")
 
-    # ------------------------------------------------------------------ #
-    # API pública
-    # ------------------------------------------------------------------ #
     def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
-        """Rellena el panel de petición desde un Flow del History."""
         self.host_edit.setText(host)
-        # tls_check.toggled auto-ajusta el puerto — ponemos el check primero
-        # y luego sobreescribimos con el puerto real del flow.
         self.tls_check.setChecked(use_tls)
         self.port_spin.setValue(port)
-        self.request_edit.setPlainText(raw.decode("utf-8", "replace"))
+        self.request_edit.setPlainText(decode(raw))
+
+
+# ══════════════════════════════════════════════════════════════
+# Race Conditions
+# ══════════════════════════════════════════════════════════════
+class _RaceWorker(QObject):
+    result   = Signal(int, str, int, float)
+    finished = Signal()
+
+
+class RaceTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._running = False
+        self._worker = _RaceWorker()
+        self._worker.result.connect(self._on_result)
+        self._worker.finished.connect(self._on_finished)
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(QLabel("Host:"))
+        self.host_edit = QLineEdit()
+        self.host_edit.setPlaceholderText("ejemplo.com")
+        self.host_edit.setAccessibleName("Host de destino")
+        top.addWidget(self.host_edit, 3)
+        top.addWidget(QLabel("Puerto:"))
+        self.port_spin = QSpinBox()
+        self.port_spin.setRange(1, 65535)
+        self.port_spin.setValue(80)
+        top.addWidget(self.port_spin)
+        self.tls_check = QCheckBox("HTTPS")
+        self.tls_check.toggled.connect(lambda on: self.port_spin.setValue(443 if on else 80))
+        top.addWidget(self.tls_check)
+        top.addWidget(QLabel("Peticiones:"))
+        self.count_spin = QSpinBox()
+        self.count_spin.setRange(2, 500)
+        self.count_spin.setValue(20)
+        self.count_spin.setToolTip("Número de peticiones a lanzar simultáneamente")
+        top.addWidget(self.count_spin)
+        self.start_btn = QPushButton("▶  Lanzar")
+        self.start_btn.setObjectName("primaryButton")
+        self.start_btn.clicked.connect(self.launch)
+        top.addWidget(self.start_btn)
+        self.clear_btn = QPushButton("Limpiar")
+        self.clear_btn.clicked.connect(self._clear)
+        top.addWidget(self.clear_btn)
+        root.addLayout(top)
+
+        main_split = QSplitter(Qt.Horizontal)
+        main_split.setHandleWidth(8)
+
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(8)
+        lbl = QLabel("Petición a enviar en paralelo")
+        lbl.setObjectName("paneCaption")
+        ll.addWidget(lbl)
+        self.request_edit = QPlainTextEdit()
+        self.request_edit.setFont(MONO)
+        self.request_edit.setPlaceholderText(
+            "POST /api/redeem HTTP/1.1\r\nHost: ejemplo.com\r\n\r\n{\"code\":\"GIFT50\"}")
+        HTTPHighlighter(self.request_edit.document())
+        ll.addWidget(self.request_edit)
+        main_split.addWidget(left)
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(6)
+        self.result_lbl = QLabel("Resultados")
+        self.result_lbl.setObjectName("paneCaption")
+        rl.addWidget(self.result_lbl)
+        self.result_table = QTableWidget(0, 4)
+        self.result_table.setHorizontalHeaderLabels(["#", "Código", "Longitud", "ms"])
+        self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.result_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.result_table.setAlternatingRowColors(True)
+        self.result_table.setShowGrid(False)
+        self.result_table.verticalHeader().setVisible(False)
+        self.result_table.verticalHeader().setDefaultSectionSize(26)
+        rh = self.result_table.horizontalHeader()
+        rh.setSectionResizeMode(0, QHeaderView.Stretch)
+        rh.setHighlightSections(False)
+        self.result_table.setColumnWidth(1, 70)
+        self.result_table.setColumnWidth(2, 90)
+        self.result_table.setColumnWidth(3, 70)
+        rl.addWidget(self.result_table)
+        main_split.addWidget(right)
+        main_split.setSizes([500, 500])
+        root.addWidget(main_split, 1)
+
+    def launch(self):
+        if self._running:
+            return
+        raw_text = self.request_edit.toPlainText()
+        if not raw_text.strip():
+            QMessageBox.warning(self, "Petición vacía", "Escribe la petición a enviar.")
+            return
+        host = self.host_edit.text().strip()
+        if not host:
+            QMessageBox.warning(self, "Host vacío", "Indica el host de destino.")
+            return
+        count = self.count_spin.value()
+        port = self.port_spin.value()
+        use_tls = self.tls_check.isChecked()
+        raw = raw_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8", "replace")
+        self._running = True
+        self.start_btn.setEnabled(False)
+        self.result_lbl.setText(f"Lanzando {count} peticiones simultáneas…")
+        threading.Thread(
+            target=self._run, args=(raw, host, port, use_tls, count), daemon=True
+        ).start()
+
+    def _run(self, raw, host, port, use_tls, count):
+        start_ev = threading.Event()
+
+        def send_one(idx):
+            start_ev.wait()
+            t0 = time.perf_counter()
+            try:
+                resp = send_raw_request(raw, host, port, use_tls)
+                elapsed = (time.perf_counter() - t0) * 1000
+                first_line = resp.split(b"\r\n", 1)[0].decode("latin-1", "replace")
+                parts = first_line.split(" ", 2)
+                status = parts[1] if len(parts) >= 2 else "???"
+                length = len(resp)
+            except Exception:
+                elapsed = (time.perf_counter() - t0) * 1000
+                status = "ERR"
+                length = 0
+            self._worker.result.emit(idx, status, length, elapsed)
+
+        threads = [threading.Thread(target=send_one, args=(i,), daemon=True)
+                   for i in range(count)]
+        for t in threads:
+            t.start()
+        start_ev.set()
+        for t in threads:
+            t.join()
+        self._worker.finished.emit()
+
+    @Slot(int, str, int, float)
+    def _on_result(self, idx, status, length, ms):
+        row = self.result_table.rowCount()
+        self.result_table.insertRow(row)
+        for col, val in enumerate([str(idx + 1), status, str(length), f"{ms:.0f}"]):
+            item = QTableWidgetItem(val)
+            if col == 1:
+                color = _status_color(status)
+                if color:
+                    item.setForeground(color)
+            self.result_table.setItem(row, col, item)
+
+    @Slot()
+    def _on_finished(self):
+        self._running = False
+        self.start_btn.setEnabled(True)
+        self.result_lbl.setText(f"Resultados — {self.result_table.rowCount()} respuestas")
+
+    def _clear(self):
+        self.result_table.setRowCount(0)
+        self.result_lbl.setText("Resultados")
+
+    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
+        self.host_edit.setText(host)
+        self.tls_check.setChecked(use_tls)
+        self.port_spin.setValue(port)
+        self.request_edit.setPlainText(decode(raw))
+
+
+# ══════════════════════════════════════════════════════════════
+# JWT Auditor
+# ══════════════════════════════════════════════════════════════
+class _JWTWorker(QObject):
+    found    = Signal(str)
+    progress = Signal(int, int)
+    finished = Signal()
+
+
+class JWTTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._running = False
+        self._worker = _JWTWorker()
+        self._worker.found.connect(self._on_found)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_finished)
+        self._wordlist: list[str] = []
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        token_row = QHBoxLayout()
+        token_row.setSpacing(8)
+        lbl = QLabel("Token JWT:")
+        lbl.setObjectName("paneCaption")
+        token_row.addWidget(lbl)
+        self.token_edit = QLineEdit()
+        self.token_edit.setFont(MONO)
+        self.token_edit.setPlaceholderText("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…")
+        self.token_edit.setAccessibleName("Token JWT a analizar")
+        self.token_edit.textChanged.connect(self._decode_token)
+        token_row.addWidget(self.token_edit)
+        decode_btn = QPushButton("Decodificar")
+        decode_btn.clicked.connect(self._decode_token)
+        token_row.addWidget(decode_btn)
+        root.addLayout(token_row)
+
+        decode_split = QSplitter(Qt.Horizontal)
+        decode_split.setHandleWidth(8)
+
+        for attr, title in [("header_view", "Header"), ("payload_view", "Payload"), ("sig_view", "Firma (base64url)")]:
+            box = QWidget()
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(0, 0, 0, 0)
+            bl.setSpacing(4)
+            lbl2 = QLabel(title)
+            lbl2.setObjectName("paneCaption")
+            bl.addWidget(lbl2)
+            view = QPlainTextEdit()
+            view.setFont(MONO)
+            view.setReadOnly(True)
+            if attr != "sig_view":
+                JSONHighlighter(view.document())
+            bl.addWidget(view)
+            setattr(self, attr, view)
+            decode_split.addWidget(box)
+
+        decode_split.setSizes([400, 400, 250])
+        root.addWidget(decode_split)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setObjectName("controlBar")
+        root.addWidget(sep)
+
+        bf_lbl = QLabel("Bruteforce de secreto  —  HS256 / HS384 / HS512")
+        bf_lbl.setObjectName("paneCaption")
+        root.addWidget(bf_lbl)
+
+        bf_row = QHBoxLayout()
+        bf_row.setSpacing(8)
+        bf_row.addWidget(QLabel("Algoritmo:"))
+        self.alg_combo = QComboBox()
+        self.alg_combo.addItems(["Auto", "HS256", "HS384", "HS512"])
+        self.alg_combo.setToolTip("Auto detecta el alg del header; o fuerza uno concreto")
+        bf_row.addWidget(self.alg_combo)
+        bf_row.addWidget(QLabel("Wordlist:"))
+        self.bf_wl_path = QLineEdit()
+        self.bf_wl_path.setReadOnly(True)
+        self.bf_wl_path.setPlaceholderText("Sin wordlist cargada")
+        bf_row.addWidget(self.bf_wl_path, 2)
+        load_btn = QPushButton("Cargar…")
+        load_btn.clicked.connect(self._load_wordlist)
+        bf_row.addWidget(load_btn)
+        self.wl_count_lbl = QLabel("0 palabras")
+        self.wl_count_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        bf_row.addWidget(self.wl_count_lbl)
+        self.bf_start_btn = QPushButton("▶  Iniciar BF")
+        self.bf_start_btn.setObjectName("primaryButton")
+        self.bf_start_btn.clicked.connect(self.toggle_bruteforce)
+        bf_row.addWidget(self.bf_start_btn)
+        root.addLayout(bf_row)
+
+        self.bf_progress = QProgressBar()
+        self.bf_progress.setTextVisible(True)
+        self.bf_progress.setFormat("%v / %m  (%p%)")
+        self.bf_progress.setValue(0)
+        self.bf_progress.setFixedHeight(14)
+        root.addWidget(self.bf_progress)
+
+        self.bf_result_lbl = QLabel("")
+        self.bf_result_lbl.setStyleSheet(
+            f"color: {_GREEN}; font-size: 13px; font-weight: bold;")
+        root.addWidget(self.bf_result_lbl)
+
+    def _decode_token(self):
+        token = self.token_edit.text().strip()
+        parts = token.split(".")
+        if len(parts) != 3:
+            self.header_view.setPlainText("")
+            self.payload_view.setPlainText("")
+            self.sig_view.setPlainText("")
+            return
+        try:
+            hdr = json.dumps(
+                json.loads(_b64url_decode(parts[0])), indent=2, ensure_ascii=False)
+        except Exception:
+            hdr = decode(_b64url_decode(parts[0]))
+        try:
+            pay = json.dumps(
+                json.loads(_b64url_decode(parts[1])), indent=2, ensure_ascii=False)
+        except Exception:
+            pay = decode(_b64url_decode(parts[1]))
+        self.header_view.setPlainText(hdr)
+        self.payload_view.setPlainText(pay)
+        self.sig_view.setPlainText(parts[2])
+        try:
+            alg = json.loads(_b64url_decode(parts[0])).get("alg", "")
+            if alg in ("HS256", "HS384", "HS512"):
+                idx = self.alg_combo.findText(alg)
+                if idx >= 0:
+                    self.alg_combo.setCurrentIndex(idx)
+        except Exception:
+            pass
+
+    def _load_wordlist(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Cargar wordlist", "", "Texto (*.txt);;Todos (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = [l.rstrip("\r\n") for l in f if l.strip()]
+        except Exception as exc:
+            QMessageBox.critical(self, "Error al cargar", str(exc))
+            return
+        self._wordlist = lines
+        self.bf_wl_path.setText(path)
+        self.wl_count_lbl.setText(f"{len(lines):,} palabras")
+
+    def toggle_bruteforce(self):
+        if self._running:
+            self._running = False
+            self.bf_start_btn.setText("▶  Iniciar BF")
+            return
+        token = self.token_edit.text().strip()
+        parts = token.split(".")
+        if len(parts) != 3:
+            QMessageBox.warning(self, "Token no válido",
+                "Introduce un token JWT válido primero.")
+            return
+        if not self._wordlist:
+            QMessageBox.warning(self, "Wordlist vacía", "Carga una wordlist primero.")
+            return
+        sel = self.alg_combo.currentText()
+        algs = ["HS256", "HS384", "HS512"] if sel == "Auto" else [sel]
+        self._running = True
+        self.bf_start_btn.setText("■  Detener")
+        self.bf_result_lbl.setText("")
+        self.bf_result_lbl.setStyleSheet(
+            f"color: {_GREEN}; font-size: 13px; font-weight: bold;")
+        self.bf_progress.setMaximum(len(self._wordlist))
+        self.bf_progress.setValue(0)
+        threading.Thread(
+            target=self._run_bf,
+            args=(parts[0], parts[1], parts[2], list(self._wordlist), algs),
+            daemon=True
+        ).start()
+
+    def _run_bf(self, hdr_b64, pay_b64, sig_b64, wordlist, algs):
+        for i, secret in enumerate(wordlist):
+            if not self._running:
+                break
+            for alg in algs:
+                if _verify_hs(hdr_b64, pay_b64, sig_b64, secret, alg):
+                    self._worker.found.emit(secret)
+                    self._running = False
+                    break
+            if not self._running:
+                break
+            self._worker.progress.emit(i + 1, len(wordlist))
+        self._worker.finished.emit()
+
+    @Slot(str)
+    def _on_found(self, secret: str):
+        self.bf_result_lbl.setText(f"✓  Secreto encontrado: {secret}")
+
+    @Slot(int, int)
+    def _on_progress(self, done, total):
+        self.bf_progress.setValue(done)
+
+    @Slot()
+    def _on_finished(self):
+        self._running = False
+        self.bf_start_btn.setText("▶  Iniciar BF")
+        if not self.bf_result_lbl.text():
+            self.bf_result_lbl.setStyleSheet(f"color: {_AMBER}; font-size: 12px;")
+            self.bf_result_lbl.setText("Secreto no encontrado con la wordlist dada.")
+
+    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
+        text = decode(raw)
+        jwt = _extract_jwt(text)
+        if jwt:
+            self.token_edit.setText(jwt)
+
+
+# ══════════════════════════════════════════════════════════════
+# Contenedor principal — agrupa las tres herramientas
+# ══════════════════════════════════════════════════════════════
+class FuzzerTab(QWidget):
+    """Pestaña raíz del Fuzzer: contiene sub-pestañas por herramienta."""
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Barra de herramientas siempre visible con los 3 modos
+        tool_bar = QFrame()
+        tool_bar.setObjectName("controlBar")
+        tbl = QHBoxLayout(tool_bar)
+        tbl.setContentsMargins(12, 8, 12, 8)
+        tbl.setSpacing(10)
+
+        lbl = QLabel("Nueva sesión:")
+        lbl.setObjectName("paneCaption")
+        tbl.addWidget(lbl)
+
+        for text, slot in [
+            ("⚡  Fuzzing",         lambda: self.add_fuzzing_tab()),
+            ("⏱  Race Conditions", lambda: self.add_race_tab()),
+            ("🔑  JWT Auditor",    lambda: self.add_jwt_tab()),
+        ]:
+            btn = QPushButton(text)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(slot)
+            tbl.addWidget(btn)
+
+        tbl.addStretch()
+        layout.addWidget(tool_bar)
+
+        self._tabs = QTabWidget()
+        self._tabs.setTabsClosable(True)
+        self._tabs.tabBar().setExpanding(False)
+        self._tabs.tabCloseRequested.connect(self._close_tab)
+        layout.addWidget(self._tabs)
+
+    def _close_tab(self, idx: int):
+        self._tabs.removeTab(idx)
+
+    # ── API pública ──────────────────────────────────────────
+    def add_fuzzing_tab(self, host="", port=80, use_tls=False, raw=b"") -> FuzzingTab:
+        tab = FuzzingTab()
+        if raw:
+            tab.load_from_flow(host, port, use_tls, raw)
+        idx = self._tabs.addTab(tab, f"Fuzzing {self._tabs.count() + 1}")
+        self._tabs.setCurrentIndex(idx)
+        return tab
+
+    def add_race_tab(self, host="", port=80, use_tls=False, raw=b"") -> RaceTab:
+        tab = RaceTab()
+        if raw:
+            tab.load_from_flow(host, port, use_tls, raw)
+        idx = self._tabs.addTab(tab, f"Race {self._tabs.count() + 1}")
+        self._tabs.setCurrentIndex(idx)
+        return tab
+
+    def add_jwt_tab(self, host="", port=80, use_tls=False, raw=b"") -> JWTTab:
+        tab = JWTTab()
+        if raw:
+            tab.load_from_flow(host, port, use_tls, raw)
+        idx = self._tabs.addTab(tab, f"JWT {self._tabs.count() + 1}")
+        self._tabs.setCurrentIndex(idx)
+        return tab
+
+    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
+        """Compatibilidad: abre una pestaña de Fuzzing."""
+        self.add_fuzzing_tab(host, port, use_tls, raw)

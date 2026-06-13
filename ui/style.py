@@ -1,4 +1,4 @@
-"""Paleta de colores, fuente monoespaciada y stylesheet QSS de MiniBurp."""
+"""Paleta de colores, fuente monoespaciada y stylesheet QSS de Leech."""
 from __future__ import annotations
 
 from PySide6.QtGui import QColor, QFont
@@ -20,7 +20,78 @@ SELECTION = "#3a4a63"
 
 
 def decode(data: bytes) -> str:
-    return data.decode("utf-8", "replace") if data else ""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+
+
+def _unchunk(body: bytes) -> bytes:
+    """Extrae los datos de un cuerpo Transfer-Encoding: chunked."""
+    result = b""
+    while body:
+        crlf = body.find(b"\r\n")
+        if crlf == -1:
+            break
+        try:
+            size = int(body[:crlf].split(b";")[0].strip(), 16)
+        except ValueError:
+            break
+        body = body[crlf + 2:]
+        if size == 0:
+            break
+        result += body[:size]
+        body = body[size + 2:]
+    return result
+
+
+def _decompress(body: bytes, encoding: str) -> bytes:
+    import gzip, zlib
+    enc = encoding.lower().strip()
+    try:
+        if enc == "gzip":
+            return gzip.decompress(body)
+        if enc == "deflate":
+            try:
+                return zlib.decompress(body)
+            except zlib.error:
+                return zlib.decompress(body, -15)
+        if enc in ("br", "brotli"):
+            import brotli          # pip install brotli (opcional)
+            return brotli.decompress(body)
+        if enc == "zstd":
+            import zstandard       # pip install zstandard (opcional)
+            return zstandard.ZstdDecompressor().decompress(body)
+    except Exception:
+        pass
+    return body
+
+
+def decode_http(raw: bytes) -> str:
+    """Decodifica un mensaje HTTP descomprimiendo y desencadenando el cuerpo."""
+    if not raw:
+        return ""
+    if b"\r\n\r\n" not in raw:
+        return decode(raw)
+
+    header_bytes, body = raw.split(b"\r\n\r\n", 1)
+    headers_lower = header_bytes.lower()
+
+    if b"transfer-encoding: chunked" in headers_lower:
+        body = _unchunk(body)
+
+    content_encoding = ""
+    for line in header_bytes.split(b"\r\n")[1:]:
+        if line.lower().startswith(b"content-encoding:"):
+            content_encoding = line.split(b":", 1)[1].decode("latin-1").strip()
+            break
+
+    if content_encoding:
+        body = _decompress(body, content_encoding)
+
+    return decode(header_bytes) + "\r\n\r\n" + decode(body)
 
 
 def status_color(status: str) -> QColor | None:
@@ -325,6 +396,31 @@ QProgressBar {{
 QProgressBar::chunk {{
     background-color: {accent};
     border-radius: 3px;
+}}
+QPushButton#scopeBtn:checked {{
+    background-color: {accent};
+    color: #1b1d22;
+    border-color: {accent};
+    font-weight: 600;
+}}
+QPushButton#scopeBtn:checked:hover {{
+    background-color: {accent_hover};
+    border-color: {accent_hover};
+}}
+
+QPushButton#interceptBtn {{
+    font-weight: 700;
+    min-width: 150px;
+}}
+QPushButton#interceptBtn:checked {{
+    background-color: #c0392b;
+    color: #ffffff;
+    border-color: #c0392b;
+    font-weight: 700;
+}}
+QPushButton#interceptBtn:checked:hover {{
+    background-color: #e74c3c;
+    border-color: #e74c3c;
 }}
 """.format(
     bg_base=BG_BASE,

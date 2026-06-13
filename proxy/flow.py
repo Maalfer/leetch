@@ -1,6 +1,7 @@
 """Modelo de datos Flow y utilidad de cabeceras HTTP."""
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -20,6 +21,8 @@ class Flow:
     status: str = ""
     use_tls: bool = False
     timestamp: float = field(default_factory=time.time)
+    label: str = ""     # "" | "rojo" | "naranja" | "amarillo" | "verde" | "azul" | "morado"
+    comment: str = ""
 
     @property
     def url(self) -> str:
@@ -33,6 +36,31 @@ class Flow:
     @property
     def length(self) -> int:
         return len(self.raw_response)
+
+
+class PendingRequest:
+    """Petición HTTP retenida en el Intercept hasta que el usuario decide Forward/Drop."""
+
+    def __init__(self, raw: bytes, host: str, port: int, scheme: str):
+        self.raw = raw
+        self.host = host
+        self.port = port
+        self.scheme = scheme
+        self._event = threading.Event()
+        self.modified_raw: bytes | None = None
+        self.dropped: bool = False
+
+    def forward(self, modified: bytes | None = None) -> None:
+        self.modified_raw = modified
+        self.dropped = False
+        self._event.set()
+
+    def drop(self) -> None:
+        self.dropped = True
+        self._event.set()
+
+    def wait(self, timeout: float = 300.0) -> bool:
+        return self._event.wait(timeout=timeout)
 
 
 def set_header(raw: bytes, header: bytes, value: bytes) -> bytes:

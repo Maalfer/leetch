@@ -13,7 +13,7 @@ from typing import Callable, Optional
 from urllib.parse import urlsplit
 
 from proxy.ca import ensure_ca, make_host_cert
-from proxy.flow import Flow, set_header
+from proxy.flow import Flow, PendingRequest, set_header
 from net import http_message as hm
 
 
@@ -21,10 +21,15 @@ class ProxyServer:
     """Servidor proxy multihilo con MITM HTTPS."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 8080,
-                 on_flow: Optional[Callable[[Flow], None]] = None):
+                 on_flow: Optional[Callable[[Flow], None]] = None,
+                 on_intercept: Optional[Callable] = None):
         self.host = host
         self.port = port
         self.on_flow = on_flow
+        self.on_intercept = on_intercept
+        self.intercept_enabled: bool = False
+        self.transform_request: Optional[Callable[[bytes], bytes]] = None
+        self.transform_response: Optional[Callable[[bytes], bytes]] = None
         self._server_sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -129,6 +134,24 @@ class ProxyServer:
 
         outgoing = self._to_origin_form(raw, path)
 
+        # Match & Replace en petición
+        if self.transform_request:
+            try:
+                outgoing = self.transform_request(outgoing)
+            except Exception:
+                pass
+
+        # Intercept: bloquea el hilo hasta que el usuario decide Forward/Drop
+        if self.intercept_enabled and self.on_intercept:
+            pending = PendingRequest(outgoing, host, port, scheme)
+            self.on_intercept(pending)
+            if not pending.wait(timeout=300):
+                return
+            if pending.dropped:
+                return
+            if pending.modified_raw is not None:
+                outgoing = pending.modified_raw
+
         flow = Flow(
             id=self._next_id(),
             method=method,
@@ -149,6 +172,13 @@ class ProxyServer:
                 f"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n"
                 f"Content-Length: {len(str(exc))}\r\n\r\n{exc}"
             ).encode("latin-1", "replace")
+
+        # Match & Replace en respuesta
+        if self.transform_response:
+            try:
+                response = self.transform_response(response)
+            except Exception:
+                pass
 
         flow.raw_response = response
         flow.status = hm.status_code(response)
@@ -178,7 +208,7 @@ class ProxyServer:
 
         client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         client_ctx.load_cert_chain(cert_path, key_path)
-        client_ctx.set_alpn_protocols(["http/1.1"])
+        client_ctx.set_alpn_protocols(["h2", "http/1.1"])
 
         try:
             tls_client = client_ctx.wrap_socket(client, server_side=True)
@@ -197,6 +227,16 @@ class ProxyServer:
             tls = up_ctx.wrap_socket(raw_up, server_hostname=host)
             tls.settimeout(30)
             return tls
+
+        if tls_client.selected_alpn_protocol() == "h2":
+            try:
+                self._handle_h2_tunnel(tls_client, host, port, _open_upstream)
+            finally:
+                try:
+                    tls_client.close()
+                except OSError:
+                    pass
+            return
 
         try:
             tls_up = _open_upstream()
@@ -225,6 +265,24 @@ class ProxyServer:
                         path += "?" + split.query
 
                 outgoing = self._to_origin_form(raw, path)
+
+                # Match & Replace en petición HTTPS
+                if self.transform_request:
+                    try:
+                        outgoing = self.transform_request(outgoing)
+                    except Exception:
+                        pass
+
+                # Intercept HTTPS
+                if self.intercept_enabled and self.on_intercept:
+                    pending = PendingRequest(outgoing, host, port, "https")
+                    self.on_intercept(pending)
+                    if not pending.wait(timeout=300):
+                        break
+                    if pending.dropped:
+                        break
+                    if pending.modified_raw is not None:
+                        outgoing = pending.modified_raw
 
                 flow = Flow(
                     id=self._next_id(),
@@ -256,6 +314,13 @@ class ProxyServer:
                             f"Content-Length: {len(msg)}\r\n\r\n{msg}"
                         ).encode("latin-1", "replace")
 
+                # Match & Replace en respuesta HTTPS
+                if self.transform_response:
+                    try:
+                        response = self.transform_response(response)
+                    except Exception:
+                        pass
+
                 flow.raw_response = response
                 flow.status = hm.status_code(response)
 
@@ -286,6 +351,234 @@ class ProxyServer:
                     s.close()
                 except OSError:
                     pass
+
+    def _handle_h2_tunnel(self, tls_client: ssl.SSLSocket,
+                          host: str, port: int, open_upstream) -> None:
+        """Gestiona una conexión HTTP/2 del cliente, reenviando como HTTP/1.1 al servidor."""
+        try:
+            import h2.connection
+            import h2.config
+            import h2.events
+            import h2.exceptions
+        except ImportError:
+            return
+
+        h2_lock = threading.Lock()
+        cfg = h2.config.H2Configuration(client_side=False, header_encoding="utf-8")
+        h2c = h2.connection.H2Connection(config=cfg)
+        h2c.initiate_connection()
+
+        def _flush():
+            d = h2c.data_to_send(65535)
+            if d:
+                tls_client.sendall(d)
+
+        with h2_lock:
+            _flush()
+
+        pending: dict[int, dict] = {}
+        dispatched: set[int] = set()
+
+        def _dispatch(stream_id: int) -> None:
+            if stream_id in dispatched:
+                return
+            dispatched.add(stream_id)
+            info = pending.pop(stream_id, None)
+            if not info:
+                return
+            threading.Thread(
+                target=self._serve_h2_stream,
+                args=(h2c, h2_lock, tls_client, stream_id,
+                      info["hdrs"], info["body"], host, port, open_upstream),
+                daemon=True,
+            ).start()
+
+        try:
+            while True:
+                try:
+                    data = tls_client.recv(65535)
+                except (ssl.SSLError, OSError):
+                    break
+                if not data:
+                    break
+
+                with h2_lock:
+                    try:
+                        events = h2c.receive_data(data)
+                    except h2.exceptions.ProtocolError:
+                        break
+                    _flush()
+
+                for ev in events:
+                    if isinstance(ev, h2.events.RequestReceived):
+                        pending[ev.stream_id] = {"hdrs": list(ev.headers), "body": b""}
+                        if ev.stream_ended is not None:
+                            _dispatch(ev.stream_id)
+
+                    elif isinstance(ev, h2.events.DataReceived):
+                        with h2_lock:
+                            h2c.acknowledge_received_data(
+                                ev.flow_controlled_length, ev.stream_id
+                            )
+                            _flush()
+                        if ev.stream_id in pending:
+                            pending[ev.stream_id]["body"] += ev.data
+                        if ev.stream_ended is not None:
+                            _dispatch(ev.stream_id)
+
+                    elif isinstance(ev, h2.events.StreamEnded):
+                        _dispatch(ev.stream_id)
+
+                    elif isinstance(ev, h2.events.WindowUpdated):
+                        with h2_lock:
+                            _flush()
+
+                    elif isinstance(ev, h2.events.ConnectionTerminated):
+                        return
+        except Exception:
+            pass
+
+    def _serve_h2_stream(self, h2c, h2_lock: threading.Lock,
+                          tls_client: ssl.SSLSocket, stream_id: int,
+                          hdrs: list, body: bytes,
+                          host: str, port: int, open_upstream) -> None:
+        """Hilo worker: convierte un stream H2 a HTTP/1.1, lo envía y devuelve H2 response."""
+        method, path, authority = "GET", "/", host
+        for name, value in hdrs:
+            n = name if isinstance(name, str) else name.decode("utf-8", "replace")
+            v = value if isinstance(value, str) else value.decode("utf-8", "replace")
+            if n == ":method":
+                method = v
+            elif n == ":path":
+                path = v
+            elif n == ":authority":
+                authority = v
+
+        _skip_req = {
+            ":method", ":path", ":scheme", ":authority", ":status",
+            "host", "connection", "keep-alive", "transfer-encoding",
+            "upgrade", "te", "proxy-connection",
+        }
+        h1_parts = [f"{method} {path} HTTP/1.1\r\n".encode(),
+                    f"Host: {authority or host}\r\n".encode()]
+        for name, value in hdrs:
+            n = (name if isinstance(name, str) else name.decode("utf-8", "replace")).lower()
+            v = value if isinstance(value, str) else value.decode("utf-8", "replace")
+            if n in _skip_req:
+                continue
+            h1_parts.append(f"{n}: {v}\r\n".encode())
+        if body:
+            h1_parts.append(f"content-length: {len(body)}\r\n".encode())
+        h1_parts.append(b"\r\n")
+        if body:
+            h1_parts.append(body)
+
+        outgoing = b"".join(h1_parts)
+
+        if self.transform_request:
+            try:
+                outgoing = self.transform_request(outgoing)
+            except Exception:
+                pass
+
+        if self.intercept_enabled and self.on_intercept:
+            pending_req = PendingRequest(outgoing, host, port, "https")
+            self.on_intercept(pending_req)
+            if not pending_req.wait(timeout=300) or pending_req.dropped:
+                try:
+                    with h2_lock:
+                        h2c.reset_stream(stream_id)
+                        d = h2c.data_to_send(65535)
+                        if d:
+                            tls_client.sendall(d)
+                except Exception:
+                    pass
+                return
+            if pending_req.modified_raw is not None:
+                outgoing = pending_req.modified_raw
+
+        flow = Flow(
+            id=self._next_id(), method=method, host=host, port=port,
+            scheme="https", path=path, raw_request=outgoing, use_tls=True,
+        )
+
+        try:
+            tls_up = open_upstream()
+            tls_up.sendall(outgoing)
+            response = hm.read_http_message(tls_up)
+            tls_up.close()
+        except Exception as exc:
+            msg = str(exc)
+            response = (
+                f"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n"
+                f"Content-Length: {len(msg)}\r\n\r\n{msg}"
+            ).encode("latin-1", "replace")
+
+        if self.transform_response:
+            try:
+                response = self.transform_response(response)
+            except Exception:
+                pass
+
+        flow.raw_response = response
+        flow.status = hm.status_code(response)
+        if self.on_flow:
+            self.on_flow(flow)
+
+        hdr_bytes, _, resp_body = response.partition(b"\r\n\r\n")
+        status_parts = hdr_bytes.split(b"\r\n", 1)[0].split(b" ", 2)
+        status_code = status_parts[1].decode("ascii", "replace") if len(status_parts) >= 2 else "502"
+
+        _skip_resp = {b"connection", b"keep-alive", b"transfer-encoding",
+                      b"upgrade", b"te", b"proxy-connection"}
+        h2_resp_hdrs = [(b":status", status_code.encode())]
+        for line in hdr_bytes.split(b"\r\n")[1:]:
+            if b":" in line:
+                k, _, v = line.partition(b":")
+                k_lower = k.strip().lower()
+                if k_lower not in _skip_resp:
+                    h2_resp_hdrs.append((k_lower, v.strip()))
+
+        if b"transfer-encoding: chunked" in hdr_bytes.lower():
+            result = b""
+            buf = resp_body
+            while buf:
+                crlf = buf.find(b"\r\n")
+                if crlf == -1:
+                    break
+                try:
+                    size = int(buf[:crlf].split(b";")[0].strip(), 16)
+                except ValueError:
+                    break
+                buf = buf[crlf + 2:]
+                if size == 0:
+                    break
+                result += buf[:size]
+                buf = buf[size + 2:]
+            resp_body = result
+
+        try:
+            with h2_lock:
+                h2c.send_headers(stream_id, h2_resp_hdrs)
+                d = h2c.data_to_send(65535)
+                if d:
+                    tls_client.sendall(d)
+
+            chunk_size = 16384
+            for i in range(0, len(resp_body), chunk_size):
+                with h2_lock:
+                    h2c.send_data(stream_id, resp_body[i: i + chunk_size])
+                    d = h2c.data_to_send(65535)
+                    if d:
+                        tls_client.sendall(d)
+
+            with h2_lock:
+                h2c.send_data(stream_id, b"", end_stream=True)
+                d = h2c.data_to_send(65535)
+                if d:
+                    tls_client.sendall(d)
+        except Exception:
+            pass
 
     @staticmethod
     def _to_origin_form(raw: bytes, path: str) -> bytes:
