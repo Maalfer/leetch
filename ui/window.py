@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtGui import QAction, QColor
@@ -578,10 +579,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Navegador / CA
     # ------------------------------------------------------------------ #
+    _CA_INSTALLED_FLAG = os.path.join(
+        os.path.expanduser("~"), ".miniburp", "ca_keychain_installed")
+
     def _find_browser(self) -> str | None:
+        # Chromium tiene menos restricciones de seguridad que Chrome → va primero.
         candidates = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             shutil.which("chromium"),
             shutil.which("chromium-browser"),
             shutil.which("google-chrome"),
@@ -589,23 +594,91 @@ class MainWindow(QMainWindow):
         ]
         return next((p for p in candidates if p and os.path.isfile(p)), None)
 
+    def _ca_keychain_installed(self) -> bool:
+        return os.path.exists(self._CA_INSTALLED_FLAG)
+
+    def _install_ca_to_keychain(self) -> bool:
+        """Instala la CA en el login keychain del usuario.
+
+        macOS muestra un diálogo nativo pidiendo la contraseña — mismo
+        comportamiento que Burp Suite y Caido la primera vez.
+        """
+        if not os.path.exists(CA_CERT_FILE):
+            return False
+        try:
+            result = subprocess.run([
+                "security", "add-trusted-cert",
+                "-d", "-r", "trustRoot",
+                "-k", os.path.expanduser("~/Library/Keychains/login.keychain-db"),
+                CA_CERT_FILE,
+            ], capture_output=True, timeout=60)
+            if result.returncode == 0:
+                # Marca la instalación para no volver a preguntar
+                open(self._CA_INSTALLED_FLAG, "w").close()
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _ensure_ca_ready(self):
+        """Bloquea brevemente hasta que la CA esté generada en disco."""
+        import time
+        from proxy.ca import ensure_ca
+        if not os.path.exists(CA_CERT_FILE):
+            # La CA se genera en el hilo del proxy; forzamos aquí si aún no existe.
+            t = threading.Thread(target=ensure_ca, daemon=True)
+            t.start()
+            t.join(timeout=15)
+
     def launch_browser(self):
         browser = self._find_browser()
         if not browser:
             QMessageBox.warning(
                 self, "Navegador no encontrado",
-                "No se encontró Google Chrome ni Chromium instalado.\n"
-                "Instala Chrome o Chromium y vuelve a intentarlo.",
+                "No se encontró Chromium ni Google Chrome instalado.\n\n"
+                "Instala Chromium (preferido) o Chrome y vuelve a intentarlo.",
             )
             return
+
+        # Aseguramos que la CA esté generada antes de instalarla
+        self._ensure_ca_ready()
+
+        # Primera vez: instalar CA en el keychain para que Chrome/Chromium confíe
+        if not self._ca_keychain_installed():
+            reply = QMessageBox.question(
+                self, "Instalar certificado CA",
+                "Para interceptar tráfico HTTPS, MiniBurp necesita que confíes "
+                "en su autoridad certificadora.\n\n"
+                "macOS te pedirá tu contraseña de usuario (igual que Burp Suite). "
+                "¿Instalar ahora?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                ok = self._install_ca_to_keychain()
+                if not ok:
+                    QMessageBox.warning(
+                        self, "CA no instalada",
+                        "No se pudo instalar la CA automáticamente.\n"
+                        "Ve a Ajustes → Instalar CA para hacerlo manualmente\n"
+                        "o abre el navegador igualmente (verás avisos de certificado).",
+                    )
+
         profile_dir = os.path.join(tempfile.gettempdir(), "miniburp_browser_profile")
         args = [
             browser,
-            f"--proxy-server={self._proxy_host}:{self._proxy_port}",
+            # Forma explícita HTTP — más fiable que sin esquema en todas las versiones
+            f"--proxy-server=http://{self._proxy_host}:{self._proxy_port}",
             f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            # Fallback por si el CA no está en el keychain todavía
             "--ignore-certificate-errors",
+            "--ignore-ssl-errors",
+            # Desactiva funciones que pueden saltarse el proxy
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-client-side-phishing-detection",
+            "--disable-default-apps",
         ]
         try:
             subprocess.Popen(args)

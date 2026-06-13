@@ -61,6 +61,9 @@ class ProxyServer:
         self._running = True
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
+        # Pre-genera la CA en background para que esté lista cuando el usuario
+        # abra el navegador integrado, sin bloquear el hilo de la GUI.
+        threading.Thread(target=self._load_ca, daemon=True).start()
 
     def stop(self) -> None:
         self._running = False
