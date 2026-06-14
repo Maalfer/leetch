@@ -12,7 +12,7 @@
 ### Linux — repositorio APT (recomendado)
 
 ```bash
-echo "deb [trusted=yes] https://maalfer.github.io/leetch stable main" \
+echo "deb [trusted=yes arch=amd64] https://maalfer.github.io/leetch stable main" \
   | sudo tee /etc/apt/sources.list.d/leetch.list
 sudo apt update
 sudo apt install leetch
