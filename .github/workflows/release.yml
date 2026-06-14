@@ -192,7 +192,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-deb
-          path: new-deb
+          path: /tmp/new-deb
 
       - name: Configurar git
         run: |
@@ -216,7 +216,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          DEB=$(ls new-deb/*.deb | head -1)
+          DEB=$(ls /tmp/new-deb/*.deb | head -1)
 
           mkdir -p pool/main/l/leetch
           mkdir -p dists/stable/main/binary-amd64
