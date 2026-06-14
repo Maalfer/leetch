@@ -2,17 +2,17 @@ Origin: Leetch
 Label: Leetch
 Suite: stable
 Codename: stable
-Version: 1.0.0
+Version: 1.0.1
 Architectures: amd64
 Components: main
 Description: Repositorio APT de Leetch
-Date: Sun, 14 Jun 2026 11:40:09 +0000
+Date: Sun, 14 Jun 2026 16:01:16 +0000
 MD5Sum:
- e0c3dabb784de12c2bd112f0bf08a9b2 912 main/binary-amd64/Packages
- 81341d111dd752c9c477856e4c57dcfe 619 main/binary-amd64/Packages.gz
+ 6098098a72eb826b40146b7f3db8ba88 912 main/binary-amd64/Packages
+ 83d92e50b31270c5991991a854489ff6 618 main/binary-amd64/Packages.gz
 SHA1:
- 61cfa4d03b7540209f503371e5e307036ca68b29 912 main/binary-amd64/Packages
- 242de4f2d6d37643cc152f86d8bb6d73acae969c 619 main/binary-amd64/Packages.gz
+ 075fbe1eeaf192728cfdd9bf534b7c484e77021d 912 main/binary-amd64/Packages
+ b4d16a4d1d7c11fc38ea9caa650e9be5a93c4d8a 618 main/binary-amd64/Packages.gz
 SHA256:
- 1e5084f76ee6d750bdf5cfd32926f1acce2925c19ddccd7f35f59c17e7dcaeff 912 main/binary-amd64/Packages
- 6df10721c86970d5b658d144316544e53f60355b428712e9709c78510cb1c858 619 main/binary-amd64/Packages.gz
+ 29ecfa9a533d771214b63906d875b5840d913a70f15c3fe2fbd71db171c8c89b 912 main/binary-amd64/Packages
+ 182c2ee6f1f3ba19eb63050524024265f90db408aa2eb89abbdea99d84750449 618 main/binary-amd64/Packages.gz
