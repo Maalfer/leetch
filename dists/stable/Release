@@ -6,13 +6,13 @@ Version: 1.0.0
 Architectures: amd64
 Components: main
 Description: Repositorio APT de Leetch
-Date: Sun, 14 Jun 2026 10:35:52 +0000
+Date: Sun, 14 Jun 2026 11:40:09 +0000
 MD5Sum:
- 1e11d9463009f20f92261f802e1a63d5 882 main/binary-amd64/Packages
- c1b7e150dfc3d1e8b031b9288509abd5 607 main/binary-amd64/Packages.gz
+ e0c3dabb784de12c2bd112f0bf08a9b2 912 main/binary-amd64/Packages
+ 81341d111dd752c9c477856e4c57dcfe 619 main/binary-amd64/Packages.gz
 SHA1:
- 01d083d4db08c9a11a885b50e6e0d060ab6cc041 882 main/binary-amd64/Packages
- 0a592978a5770969e9136bd2b546bb98d36f6d78 607 main/binary-amd64/Packages.gz
+ 61cfa4d03b7540209f503371e5e307036ca68b29 912 main/binary-amd64/Packages
+ 242de4f2d6d37643cc152f86d8bb6d73acae969c 619 main/binary-amd64/Packages.gz
 SHA256:
- 6fc2f5bae7a8d94907602bf8ec1802c28a7558a19a9d1bd80474ee678b2cc237 882 main/binary-amd64/Packages
- a3a1f638b918c07355ea58669dd5844d3462a1ea97baa3bcfb22bf681cb31b17 607 main/binary-amd64/Packages.gz
+ 1e5084f76ee6d750bdf5cfd32926f1acce2925c19ddccd7f35f59c17e7dcaeff 912 main/binary-amd64/Packages
+ 6df10721c86970d5b658d144316544e53f60355b428712e9709c78510cb1c858 619 main/binary-amd64/Packages.gz

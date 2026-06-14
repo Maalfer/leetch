@@ -2,15 +2,15 @@ Package: leetch
 Version: 1.0.0
 Architecture: amd64
 Maintainer: maalfer <maalfer59@gmail.com>
-Depends: libgl1, libglib2.0-0, libxkbcommon0, libxkbcommon-x11-0, libxcb-xinerama0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libdbus-1-3, libfontconfig1
+Depends: libgl1, libglib2.0-0, libxkbcommon0, libxkbcommon-x11-0, libxcb-xinerama0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libdbus-1-3, libfontconfig1
 Filename: pool/main/l/leetch/leetch_1.0.0_amd64.deb
-Size: 72817502
-MD5sum: 5d83747ac8dfdca5e8e3f9903ad7e8c4
-SHA1: 2a421ebb7dbe13b6b4cb9cadee3c2571ef84ae14
-SHA256: 006db298dc3f90d1f06b6dafdc72d40bf653953a126e408eef3ec64b7bc29df3
+Size: 72847152
+MD5sum: 1aa8deca74d3ceeaccd6571142e8441a
+SHA1: 8f20fc12ae9ed4a88aab980280b5a3ae5c6401cf
+SHA256: 075479044361b41eec921d13bb568afaaef141d98d768136fb929322b37155ff
 Section: net
 Priority: optional
-Homepage: https://github.com/maalfer/leether
+Homepage: https://github.com/Maalfer/leetch
 Description: Leetch — Proxy MITM HTTP/HTTPS para pentesting
  Herramienta de pentesting web de escritorio inspirada en Burp Suite y Caido.
  Incluye: Intercept, HTTP History, Repeater, Fuzzer (Sniper/Pitchfork/Cluster Bomb),
