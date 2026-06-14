@@ -252,7 +252,9 @@ class ProxyServer:
 
         client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         client_ctx.load_cert_chain(cert_path, key_path)
-        client_ctx.set_alpn_protocols(["h2", "http/1.1"] if _H2_AVAILABLE else ["http/1.1"])
+        # Forzar HTTP/1.1: el handling H2 tiene edge cases con login/redirects/cookies
+        # que rompen conexiones. HTTP/1.1 es fiable para interceptación MITM.
+        client_ctx.set_alpn_protocols(["http/1.1"])
 
         try:
             tls_client = client_ctx.wrap_socket(client, server_side=True)
@@ -271,16 +273,6 @@ class ProxyServer:
             tls = up_ctx.wrap_socket(raw_up, server_hostname=host)
             tls.settimeout(30)
             return tls
-
-        if tls_client.selected_alpn_protocol() == "h2":
-            try:
-                self._handle_h2_tunnel(tls_client, host, port, _open_upstream)
-            finally:
-                try:
-                    tls_client.close()
-                except OSError:
-                    pass
-            return
 
         try:
             tls_up = _open_upstream()

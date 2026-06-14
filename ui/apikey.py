@@ -37,7 +37,7 @@ curl -s -H "Authorization: Bearer {key}" \\
 curl -s -X POST \\
      -H "Authorization: Bearer {key}" \\
      -H "Content-Type: application/json" \\
-     -d '{"request":"GET / HTTP/1.1\\r\\nHost: ejemplo.com\\r\\n\\r\\n","tls":false}' \\
+     -d '{{"request":"GET / HTTP/1.1\\r\\nHost: ejemplo.com\\r\\n\\r\\n","tls":false}}' \\
      {url}/api/repeat
 
 # También se puede pasar la key como query param:

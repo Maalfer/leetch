@@ -33,6 +33,8 @@ from ui.decoder import DecoderTab
 from ui.sitemap import SiteMapTab
 from ui.comparer import ComparerTab
 from ui.apikey import APIKeyTab
+from ui.passive_scanner import PassiveScannerTab
+from ui.collaborator import CollaboratorTab
 import session
 
 _ASSETS = Path(__file__).parent / "assets"
@@ -495,7 +497,13 @@ class MainWindow(QMainWindow):
             f"<code>{_DEFAULT_HOST}:{_DEFAULT_PORT}</code> nada más abrir. "
             "Cambia la dirección en <i>Ajustes → Configuración del proxy</i>.</p>"
             "<p><b>3. Enviar tráfico.</b> Configura tu navegador para usar ese proxy, "
-            "o pulsa <i>Abrir navegador</i> para lanzar Chrome ya preconfigurado.</p>"
+            "o pulsa <i>Abrir navegador</i> para lanzar Chrome ya preconfigurado "
+            "(incluye soporte de localhost).</p>"
+            "<p><b>Capturar localhost en tu propio Chrome:</b> añade "
+            f"<code>--proxy-server=http://{_DEFAULT_HOST}:{_DEFAULT_PORT} "
+            "--proxy-bypass-list=&lt;-loopback&gt;</code> al acceso directo. "
+            "En <b>Firefox</b>: Ajustes → Red → Proxy manual → borra "
+            "<i>localhost, 127.0.0.1</i> del campo «Sin proxy para».</p>"
             "<p><b>4. HTTPS / CA.</b> Instala la CA desde "
             "<i>Ajustes → Instalar CA</i> y confía en <i>Leetch CA</i>.</p>"
             "<p><b>5. HTTP History.</b> Cada petición aparece en la tabla. "
@@ -587,6 +595,12 @@ class MainWindow(QMainWindow):
         self.apikey_tab = APIKeyTab()
         self.apikey_tab.set_flows_getter(lambda: self.flows)
         self.fuzzer_tab.register_tool("API Key", self.apikey_tab, "API Key")
+
+        self.passive_scanner = PassiveScannerTab()
+        self.fuzzer_tab.register_tool("Scanner Pasivo", self.passive_scanner, "Scanner Pasivo")
+
+        self.collaborator_tab = CollaboratorTab()
+        self.fuzzer_tab.register_tool("Collaborator", self.collaborator_tab, "Collaborator")
 
         self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
 
@@ -770,6 +784,7 @@ class MainWindow(QMainWindow):
             "Filtra por host, URL, método o código de estado (case insensitive)")
         self.search_edit.textChanged.connect(lambda _: self._apply_filters())
         action_row.addWidget(self.search_edit)
+        action_row.addStretch()
 
         splitter = QSplitter(Qt.Vertical)
         splitter.setHandleWidth(8)
@@ -878,6 +893,7 @@ class MainWindow(QMainWindow):
         if visible and not self.table.selectedItems():
             self.table.selectRow(row)
         self.sitemap_tab.add_flow(flow)
+        self.passive_scanner.analyze(flow)
 
     def _selected_flow(self) -> Flow | None:
         items = self.table.selectedItems()
@@ -912,7 +928,21 @@ class MainWindow(QMainWindow):
         menu.addAction(send_rep)
 
         tools_menu = QMenu("Enviar a Tools ▶", self)
-        for tool, label in [("fuzzing", "Fuzzing"), ("race", "Race Conditions"), ("jwt", "JWT Auditor")]:
+        for tool, label in [
+            ("fuzzing", "Fuzzing"),
+            ("race",    "Race Conditions"),
+            ("jwt",     "JWT Auditor"),
+            ("otp",     "OTP"),
+            ("cors",    "CORS Tester"),
+            ("sqli",     "Injection — SQLi"),
+            ("xss",      "Injection — XSS"),
+            ("lfi",      "Injection — LFI"),
+            ("cmdi",     "Injection — CMDi"),
+            ("ssti",     "Injection — SSTI"),
+            ("redirect", "Injection — Open Redirect"),
+            ("nosql",    "Injection — NoSQL"),
+            ("crlf",     "Injection — CRLF"),
+        ]:
             act = QAction(label, tools_menu)
             act.triggered.connect(
                 lambda checked=False, t=tool: self._send_flow_to_tool(flow, t))
@@ -1020,8 +1050,15 @@ class MainWindow(QMainWindow):
         text = self.search_edit.text().strip().lower()
         if not text:
             return True
-        haystack = f"{flow.method} {flow.host} {flow.url} {flow.status}".lower()
-        return text in haystack
+        meta = f"{flow.method} {flow.host} {flow.url} {flow.status} {flow.comment}".lower()
+        if text in meta:
+            return True
+        needle = text.encode("utf-8", "replace")
+        if needle in flow.raw_request.lower():
+            return True
+        if needle in flow.raw_response.lower():
+            return True
+        return False
 
     def _apply_filters(self):
         for row in range(self.table.rowCount()):
@@ -1098,6 +1135,8 @@ class MainWindow(QMainWindow):
         self.hist_response.clear()
         if hasattr(self, "sitemap_tab"):
             self.sitemap_tab.clear()
+        if hasattr(self, "passive_scanner"):
+            self.passive_scanner.clear()
 
     # ------------------------------------------------------------------ #
     # Copiar como curl
@@ -1184,8 +1223,31 @@ class MainWindow(QMainWindow):
 
     def _send_flow_to_tool(self, flow: Flow, tool: str):
         if tool == "jwt":
-            jwt_tab = self.fuzzer_tab.add_jwt_tab(
+            self.fuzzer_tab.add_jwt_tab(
                 raw=flow.raw_request, use_tls=(flow.scheme == "https"))
+            self.tabs.setCurrentIndex(3)
+            return
+        if tool == "otp":
+            self.fuzzer_tab.add_otp_tab(
+                raw=flow.raw_request, use_tls=(flow.scheme == "https"))
+            self.tabs.setCurrentIndex(3)
+            return
+        if tool == "cors":
+            self.fuzzer_tab.add_cors_tab(
+                raw=flow.raw_request, use_tls=(flow.scheme == "https"))
+            self.tabs.setCurrentIndex(3)
+            return
+        if tool in ("sqli", "xss", "lfi", "cmdi", "ssti", "redirect", "nosql", "crlf"):
+            _type_map = {
+                "sqli": "SQLi", "xss": "XSS", "lfi": "LFI", "cmdi": "CMDi",
+                "ssti": "SSTI", "redirect": "Open Redirect",
+                "nosql": "NoSQL", "crlf": "CRLF",
+            }
+            self.fuzzer_tab.add_injection_tab(
+                raw=flow.raw_request,
+                use_tls=(flow.scheme == "https"),
+                vuln_type=_type_map[tool],
+            )
             self.tabs.setCurrentIndex(3)
             return
         self.send_to_fuzzer(flow)
@@ -1347,6 +1409,9 @@ class MainWindow(QMainWindow):
         args = [
             browser,
             f"--proxy-server=http://{self._proxy_host}:{self._proxy_port}",
+            # <-loopback> anula la regla hardcoded de Chrome que excluye
+            # localhost/127.0.0.1 del proxy — necesario para capturar apps locales.
+            "--proxy-bypass-list=<-loopback>",
             f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",

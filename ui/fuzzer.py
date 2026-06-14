@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QPlainTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QLineEdit, QSpinBox,
     QFileDialog, QMessageBox, QFrame, QProgressBar, QComboBox, QMenu,
-    QTabBar,
+    QTabBar, QScrollArea,
 )
 
 from net.http_client import send_raw_request
@@ -25,6 +25,8 @@ from net import http_message as hm
 from ui.style import MONO, TEXT_DIM, decode, decode_http
 from ui.highlighter import HTTPHighlighter, JSONHighlighter
 from ui.otp import OTPTab
+from ui.cors import CORSTab
+from ui.injection import InjectionTab
 
 MARKER = "§"
 
@@ -1026,8 +1028,29 @@ class FuzzerTab(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
+        # ── fila: [lupa + filtro] [scroll con botones] ───────
+        self._tool_btns: list[tuple[str, QPushButton]] = []
+
+        bar_row = QHBoxLayout()
+        bar_row.setContentsMargins(0, 0, 0, 0)
+        bar_row.setSpacing(0)
+
+        # campo de búsqueda con lupa
+        self._tool_filter = QLineEdit()
+        self._tool_filter.setPlaceholderText("🔍  Filtrar…")
+        self._tool_filter.setClearButtonEnabled(True)
+        self._tool_filter.setFixedWidth(160)
+        self._tool_filter.setFixedHeight(36)
+        self._tool_filter.setStyleSheet(
+            "QLineEdit { border: none; border-right: 1px solid #3a3f4b;"
+            " border-radius: 0; background: #2b2f37; padding: 0 8px; }")
+        self._tool_filter.textChanged.connect(self._filter_tools)
+        bar_row.addWidget(self._tool_filter)
+
+        # contenedor interno scrollable
         tool_bar = QFrame()
         tool_bar.setObjectName("controlBar")
+        tool_bar.setStyleSheet("QFrame#controlBar { border-radius: 0; }")
         tbl = QHBoxLayout(tool_bar)
         tbl.setContentsMargins(12, 8, 12, 8)
         tbl.setSpacing(10)
@@ -1037,15 +1060,28 @@ class FuzzerTab(QWidget):
             ("Race Conditions", lambda: self.add_race_tab()),
             ("JWT Auditor",     lambda: self.add_jwt_tab()),
             ("OTP",             lambda: self.add_otp_tab()),
+            ("CORS Tester",     lambda: self.add_cors_tab()),
+            ("Injection",       lambda: self.add_injection_tab()),
         ]:
             btn = QPushButton(text)
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(slot)
             tbl.addWidget(btn)
+            self._tool_btns.append((text, btn))
 
         tbl.addStretch()
         self._toolbar_layout = tbl
-        layout.addWidget(tool_bar)
+
+        scroll = QScrollArea()
+        scroll.setWidget(tool_bar)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFixedHeight(52)
+        bar_row.addWidget(scroll, 1)
+
+        layout.addLayout(bar_row)
 
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(False)
@@ -1091,6 +1127,19 @@ class FuzzerTab(QWidget):
         self._tabs.setCurrentIndex(idx)
         return tab
 
+    def add_cors_tab(self, raw: bytes = b"", use_tls: bool = False) -> CORSTab:
+        tab = CORSTab(use_tls=use_tls, raw=raw)
+        idx = self._add_tab(tab, f"CORS {self._tabs.count() + 1}")
+        self._tabs.setCurrentIndex(idx)
+        return tab
+
+    def add_injection_tab(self, raw: bytes = b"", use_tls: bool = False,
+                          vuln_type: str = "SQLi") -> InjectionTab:
+        tab = InjectionTab(vuln_type=vuln_type, use_tls=use_tls, raw=raw)
+        idx = self._add_tab(tab, f"Injection {self._tabs.count() + 1}")
+        self._tabs.setCurrentIndex(idx)
+        return tab
+
     def register_tool(self, button_text: str, widget: QWidget,
                       tab_name: str | None = None) -> None:
         """Registra una herramienta singleton como botón en la fila 'Nueva sesión'.
@@ -1102,8 +1151,17 @@ class FuzzerTab(QWidget):
         btn = QPushButton(button_text)
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(lambda checked=False, w=widget: self.open_tool(w))
-        # Insertar justo antes del stretch final para que quede tras JWT Auditor
         self._toolbar_layout.insertWidget(self._toolbar_layout.count() - 1, btn)
+        self._tool_btns.append((button_text, btn))
+        # Aplicar filtro activo al nuevo botón
+        term = self._tool_filter.text().strip().lower()
+        if term:
+            btn.setVisible(term in button_text.lower())
+
+    def _filter_tools(self, text: str):
+        term = text.strip().lower()
+        for label, btn in self._tool_btns:
+            btn.setVisible(not term or term in label.lower())
 
     def open_tool(self, widget: QWidget) -> int:
         """Abre (o enfoca) la pestaña de una herramienta registrada."""
