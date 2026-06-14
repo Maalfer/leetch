@@ -56,8 +56,6 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-> **Linux — icono en el dock:** ejecuta `bash install-local.sh` una vez tras clonar el repositorio para registrar la app en el escritorio.
-
 ---
 
 ## Uso
