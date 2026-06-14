@@ -1,57 +1,161 @@
 """Pestaña IA para Leetch.
 
-Abre una terminal embebida (pseudo-TTY) con un shell del sistema.
-Al lanzar, escribe CLAUDE.md con el historial HTTP completo y una guía
-de análisis ofensivo, de modo que `claude` arranque con todo el contexto.
+Abre, al mostrarse, una shell real del sistema embebida (pseudo-TTY) lista para
+lanzar `claude` (Claude Code) o cualquier otra IA de terminal.  Antes de
+arrancar genera un directorio de contexto con:
+
+  - CLAUDE.md          → descripción de Leetch, sus herramientas y el objetivo
+                         de auditoría, más un índice del HTTP History.
+  - http_history/      → un fichero por petición con la request y la response
+                         completas (descomprimidas), para que la IA tenga
+                         acceso total al tráfico interceptado.
+
+La shell arranca en ese directorio, así que `claude` lee CLAUDE.md
+automáticamente y puede inspeccionar http_history/ a voluntad.
+
+El render del terminal usa **pyte** (emulador VT100 en Python puro): mantiene
+la matriz de pantalla real (posicionamiento de cursor, pantalla alternativa,
+colores…) y se vuelca a HTML, por lo que las TUIs como claude se ven bien.
 """
 from __future__ import annotations
 
+import html as _html
 import os
-import pty
-import re
-import select
 import signal
+import struct
 import subprocess
 import tempfile
 import threading
 from datetime import datetime
 from typing import Callable
 
-from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QTextCursor
+try:                       # POSIX: terminal embebido real
+    import pty
+    import select
+    import termios
+    import fcntl
+    _PTY_OK = True
+except ImportError:        # Windows: solo terminal del sistema externo
+    _PTY_OK = False
+
+try:
+    import pyte
+    _PYTE_OK = True
+except ImportError:
+    _PYTE_OK = False
+
+from PySide6.QtCore import Qt, Signal, Slot, QTimer
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QPlainTextEdit, QLineEdit,
+    QTextEdit, QApplication, QMenu,
 )
 
-from ui.style import MONO, TEXT_DIM
+from ui.style import MONO, BG_DEEP, TEXT, decode, decode_http
 
-# Regex para filtrar secuencias de escape ANSI (colores, cursor, etc.)
-_ANSI_RE = re.compile(
-    r'\x1b(?:'
-    r'[@-Z\\-_]'                      # secuencias de 2 chars
-    r'|\[[\x20-\x3f]*[\x40-\x7e]'    # CSI sequences  (ESC [ ... letra)
-    r'|\].*?(?:\x07|\x1b\\)'          # OSC sequences  (ESC ] ... BEL/ST)
-    r'|[\x20-\x2f]*[\x30-\x7e]'      # secuencias Fs/Fp/Fe
-    r')',
-    re.DOTALL,
-)
+# Paleta para los 8 colores ANSI nombrados (tono acorde al tema oscuro).
+_PALETTE = {
+    "black":   "#3a3f4a",
+    "red":     "#ff6b6b",
+    "green":   "#5fd38a",
+    "brown":   "#e5c07b",   # amarillo
+    "blue":    "#61afef",
+    "magenta": "#c678dd",
+    "cyan":    "#56b6c2",
+    "white":   "#dfe3ea",
+}
 
 
-def _strip_ansi(text: str) -> str:
-    cleaned = _ANSI_RE.sub('', text)
-    # Normalizar saltos de línea del terminal
-    cleaned = cleaned.replace('\r\n', '\n').replace('\r', '\n')
-    return cleaned
+def _css_color(value: str, default: str) -> str:
+    if not value or value == "default":
+        return default
+    if value in _PALETTE:
+        return _PALETTE[value]
+    if len(value) == 6:            # hex de 256-color / truecolor
+        try:
+            int(value, 16)
+            return "#" + value
+        except ValueError:
+            pass
+    return default
+
+
+# Teclas especiales → bytes que espera un PTY (xterm).
+_SPECIAL_KEYS = {
+    Qt.Key_Up: b'\x1b[A', Qt.Key_Down: b'\x1b[B',
+    Qt.Key_Right: b'\x1b[C', Qt.Key_Left: b'\x1b[D',
+    Qt.Key_Home: b'\x1b[H', Qt.Key_End: b'\x1b[F',
+    Qt.Key_PageUp: b'\x1b[5~', Qt.Key_PageDown: b'\x1b[6~',
+    Qt.Key_Delete: b'\x1b[3~', Qt.Key_Insert: b'\x1b[2~',
+    Qt.Key_Backspace: b'\x7f', Qt.Key_Tab: b'\t',
+    Qt.Key_Return: b'\r', Qt.Key_Enter: b'\r', Qt.Key_Escape: b'\x1b',
+}
+
+
+# ---------------------------------------------------------------------------
+# Vista de terminal: reenvía pulsaciones crudas al PTY; el contenido se pinta
+# por HTML desde AIShellTab (matriz de pyte).
+# ---------------------------------------------------------------------------
+class _TerminalView(QTextEdit):
+    key_bytes = Signal(bytes)
+
+    def __init__(self):
+        super().__init__()
+        self.setFont(MONO)
+        self.setObjectName("terminalOutput")
+        self.setReadOnly(True)
+        self.setLineWrapMode(QTextEdit.NoWrap)
+        self.setUndoRedoEnabled(False)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    def keyPressEvent(self, e):
+        mods = e.modifiers()
+        key = e.key()
+
+        if (mods & Qt.ControlModifier) and (mods & Qt.ShiftModifier):
+            if key == Qt.Key_C:
+                self.copy()
+                return
+            if key == Qt.Key_V:
+                self._paste()
+                return
+
+        if mods & Qt.ControlModifier and Qt.Key_A <= key <= Qt.Key_Z:
+            self.key_bytes.emit(bytes([key - Qt.Key_A + 1]))
+            return
+
+        if key in _SPECIAL_KEYS:
+            self.key_bytes.emit(_SPECIAL_KEYS[key])
+            return
+
+        text = e.text()
+        if text:
+            self.key_bytes.emit(text.encode('utf-8'))
+
+    def _paste(self):
+        text = QApplication.clipboard().text()
+        if text:
+            self.key_bytes.emit(text.encode('utf-8'))
+
+    def _menu(self, pos):
+        menu = QMenu(self)
+        cp = menu.addAction("Copiar")
+        cp.setEnabled(self.textCursor().hasSelection())
+        cp.triggered.connect(self.copy)
+        menu.addAction("Pegar").triggered.connect(self._paste)
+        menu.exec(self.viewport().mapToGlobal(pos))
 
 
 # ---------------------------------------------------------------------------
 # Pestaña principal
 # ---------------------------------------------------------------------------
 class AIShellTab(QWidget):
-    """Terminal embebida con shell del sistema y contexto del HTTP History."""
+    """Terminal del sistema embebida con contexto del HTTP History para la IA."""
 
-    _output_sig = Signal(str)   # thread-safe: emitido desde hilo lector
+    _output_sig = Signal(bytes)
 
     def __init__(self):
         super().__init__()
@@ -59,15 +163,26 @@ class AIShellTab(QWidget):
         self._process: subprocess.Popen | None = None
         self._tmpdir: str | None = None
         self._flows_getter: Callable | None = None
+        self._started = False
+        self._last_count = -1
 
-        self._output_sig.connect(self._append_output)
+        self._screen = pyte.Screen(100, 30) if _PYTE_OK else None
+        self._stream = pyte.ByteStream(self._screen) if _PYTE_OK else None
+        self._dirty = False
+
+        self._output_sig.connect(self._on_output)
         self._build_ui()
 
-    # ------------------------------------------------------------------ #
-    # API pública
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(30)
+        self._render_timer.timeout.connect(self._render_if_dirty)
+
+        self._ctx_timer = QTimer(self)
+        self._ctx_timer.setInterval(4000)
+        self._ctx_timer.timeout.connect(self._auto_refresh)
+
     # ------------------------------------------------------------------ #
     def set_flows_getter(self, getter: Callable) -> None:
-        """Recibe una función () → list[Flow] para leer el HTTP History."""
         self._flows_getter = getter
 
     # ------------------------------------------------------------------ #
@@ -78,310 +193,319 @@ class AIShellTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        # Barra superior
         top = QHBoxLayout()
         top.setSpacing(8)
 
-        self.launch_btn = QPushButton("Lanzar Claude con contexto")
-        self.launch_btn.setObjectName("primaryButton")
-        self.launch_btn.setToolTip(
-            "Genera CLAUDE.md con el HTTP History y abre una shell con claude listo para usar")
-        self.launch_btn.clicked.connect(self.launch)
-        top.addWidget(self.launch_btn)
-
-        self.refresh_btn = QPushButton("Actualizar contexto")
+        self.refresh_btn = QPushButton("↻  Actualizar contexto")
         self.refresh_btn.setToolTip(
-            "Regenera CLAUDE.md con las peticiones más recientes del historial")
-        self.refresh_btn.setEnabled(False)
-        self.refresh_btn.clicked.connect(self._refresh_context)
+            "Regenera CLAUDE.md y http_history/ con el tráfico más reciente")
+        self.refresh_btn.clicked.connect(self._manual_refresh)
         top.addWidget(self.refresh_btn)
 
-        self.ctrlc_btn = QPushButton("Ctrl+C")
-        self.ctrlc_btn.setToolTip("Envía SIGINT al proceso activo (interrumpir)")
-        self.ctrlc_btn.setEnabled(False)
-        self.ctrlc_btn.clicked.connect(self._send_ctrl_c)
-        top.addWidget(self.ctrlc_btn)
+        self.systerm_btn = QPushButton("⊞  Terminal del sistema")
+        self.systerm_btn.setToolTip(
+            "Abre el directorio de contexto en la terminal nativa del sistema")
+        self.systerm_btn.clicked.connect(self._open_system_terminal)
+        top.addWidget(self.systerm_btn)
 
         self.restart_btn = QPushButton("Reiniciar shell")
-        self.restart_btn.setToolTip("Cierra el proceso actual y abre una nueva shell")
-        self.restart_btn.setEnabled(False)
+        self.restart_btn.setToolTip("Cierra la shell actual y abre una nueva")
         self.restart_btn.clicked.connect(self._restart)
         top.addWidget(self.restart_btn)
 
         top.addStretch()
 
-        self.status_label = QLabel("Terminal inactiva — pulsa «Lanzar Claude con contexto»")
+        self.status_label = QLabel("Iniciando terminal…")
         self.status_label.setObjectName("paneCaption")
         top.addWidget(self.status_label)
 
         root.addLayout(top)
 
-        # Salida del terminal
-        self.output = QPlainTextEdit()
-        self.output.setFont(MONO)
-        self.output.setReadOnly(True)
-        self.output.setObjectName("terminalOutput")
-        root.addWidget(self.output, 1)
+        self.term = _TerminalView()
+        self.term.key_bytes.connect(self._write_pty)
+        root.addWidget(self.term, 1)
 
-        # Entrada
-        input_row = QHBoxLayout()
-        input_row.setSpacing(6)
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._started:
+            self._started = True
+            if _PTY_OK and _PYTE_OK:
+                QTimer.singleShot(0, self.launch)
+            else:
+                missing = "pyte" if not _PYTE_OK else "pty"
+                self.term.setPlainText(
+                    f"[Terminal embebida no disponible: falta {missing}]\n"
+                    "Usa «Terminal del sistema» para abrir claude con el contexto.")
+                self.status_label.setText("Terminal embebida no disponible")
 
-        self.input_edit = QLineEdit()
-        self.input_edit.setFont(MONO)
-        self.input_edit.setPlaceholderText(
-            "Escribe aquí y pulsa Enter para enviar al shell…")
-        self.input_edit.returnPressed.connect(self._send_input)
-        self.input_edit.setEnabled(False)
-        self.input_edit.installEventFilter(self)
-        input_row.addWidget(self.input_edit)
-
-        self.send_btn = QPushButton("Enviar")
-        self.send_btn.setEnabled(False)
-        self.send_btn.clicked.connect(self._send_input)
-        input_row.addWidget(self.send_btn)
-
-        root.addLayout(input_row)
-
-    def eventFilter(self, obj, event):
-        """Intercepta Ctrl+C / Ctrl+D en el input para enviarlos al PTY."""
-        from PySide6.QtCore import QEvent
-        from PySide6.QtGui import QKeyEvent
-        if obj is self.input_edit and event.type() == QEvent.KeyPress:
-            key_event: QKeyEvent = event
-            if key_event.modifiers() == Qt.ControlModifier:
-                if key_event.key() == Qt.Key_C:
-                    self._send_ctrl_c()
-                    return True
-                if key_event.key() == Qt.Key_D:
-                    self._write_pty(b'\x04')
-                    return True
-        return super().eventFilter(obj, event)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_winsize()
 
     # ------------------------------------------------------------------ #
     # Generación de contexto
     # ------------------------------------------------------------------ #
-    def _build_context(self) -> str:
-        flows = self._flows_getter() if self._flows_getter else []
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    def _flows(self):
+        return self._flows_getter() if self._flows_getter else []
 
+    def _build_claude_md(self, flows) -> str:
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         lines = [
-            "# Leetch — Contexto para análisis de seguridad",
-            f"_Generado automáticamente: {ts}_",
+            "# Leetch — Contexto de auditoría de seguridad web",
+            f"_Generado: {ts}_",
             "",
-            "## Herramienta",
-            "**Leetch** es un proxy MITM HTTP/HTTPS para pruebas de seguridad.",
-            "Módulos disponibles: Intercept, HTTP History, Repeater, Fuzzer, Match & Replace.",
+            "Estás dentro de **Leetch**, un proxy de interceptación HTTP/HTTPS "
+            "(estilo Burp/Caido) para pentesting web. Tienes acceso completo al "
+            "tráfico interceptado y debes actuar como experto en seguridad ofensiva.",
+            "",
+            "## Herramientas de Leetch disponibles para el usuario",
+            "- **Intercept** — pausa, edita y reenvía peticiones en vuelo.",
+            "- **HTTP History** — registro completo del tráfico (búsqueda, etiquetas, notas).",
+            "- **Repeater** — reenvío y edición manual de peticiones HTTP.",
+            "- **Tools → Fuzzing** — fuzzing con wordlists y marcadores `§…§` en la petición.",
+            "- **Tools → Race Conditions** — N peticiones simultáneas para condiciones de carrera.",
+            "- **Tools → JWT Auditor** — decodifica JWT y bruteforce de secreto HS256/384/512.",
+            "- **Tools → Decoder** — transformaciones encadenadas (base64, url, hex, hashes) + JWT.",
+            "- **Tools → Matcher** — reglas Match & Replace sobre petición/respuesta.",
+            "",
+            "## Acceso al tráfico interceptado",
+            "El tráfico completo está en la carpeta **`http_history/`** de este "
+            "directorio: un fichero `flow_NNNN.http` por petición, con la request "
+            "y la response completas (ya descomprimidas). Léelos para analizar a fondo.",
             "",
         ]
 
         if not flows:
             lines += [
-                "## HTTP History",
-                "_Sin peticiones interceptadas todavía._",
+                "_Aún no hay peticiones interceptadas. Pide al usuario que navegue "
+                "con el navegador integrado (Ajustes → Abrir navegador) y luego pulsa "
+                "«Actualizar contexto»._",
                 "",
-                "Navega con el navegador integrado (Herramientas → Abrir navegador)",
-                "para capturar tráfico y luego actualiza el contexto.",
             ]
         else:
             lines += [
-                f"## HTTP History — {len(flows)} peticiones interceptadas",
+                f"### Índice — {len(flows)} peticiones",
                 "",
-                "| # | Método | URL | Estado | Bytes |",
-                "|---|--------|-----|--------|-------|",
+                "| # | Método | URL | Estado | Bytes | Fichero |",
+                "|---|--------|-----|--------|-------|---------|",
             ]
             for f in flows:
-                url_short = f.url[:100] + "…" if len(f.url) > 100 else f.url
+                url = f.url[:90] + "…" if len(f.url) > 90 else f.url
                 lines.append(
-                    f"| {f.id} | `{f.method}` | {url_short} | **{f.status}** | {f.length} |"
-                )
-
-            # Detalle de las últimas 15 peticiones
-            recent = flows[-15:]
-            lines += [
-                "",
-                f"## Detalle de las últimas {len(recent)} peticiones",
-                "",
-            ]
-            for f in recent:
-                req_body = f.raw_request.decode('utf-8', 'replace')
-                resp_body = f.raw_response.decode('utf-8', 'replace')
-                # Truncar si son muy largas
-                if len(req_body) > 4000:
-                    req_body = req_body[:4000] + "\n… [truncado]"
-                if len(resp_body) > 4000:
-                    resp_body = resp_body[:4000] + "\n… [truncado]"
-                lines += [
-                    f"### Request #{f.id} — {f.method} {f.url}",
-                    f"**Estado:** {f.status}  ·  **Bytes:** {f.length}"
-                    + (f"  ·  **Etiqueta:** {f.label}" if f.label else "")
-                    + (f"  ·  **Nota:** {f.comment}" if f.comment else ""),
-                    "",
-                    "**Petición HTTP:**",
-                    "```http",
-                    req_body,
-                    "```",
-                    "",
-                    "**Respuesta HTTP:**",
-                    "```http",
-                    resp_body,
-                    "```",
-                    "",
-                ]
+                    f"| {f.id} | `{f.method}` | {url} | {f.status} | {f.length} "
+                    f"| `http_history/flow_{f.id:04d}.http` |")
+            lines.append("")
 
         lines += [
-            "## Objetivo del análisis",
-            "Como experto en seguridad ofensiva y pentesting web, analiza el tráfico",
-            "HTTP interceptado y:",
+            "## Objetivo",
+            "Analiza el tráfico y, como pentester, identifica y explica:",
             "",
-            "- Identifica vulnerabilidades: SQLi, XSS, IDOR, SSRF, SSTI, open redirect, etc.",
-            "- Detecta tokens, credenciales o datos sensibles expuestos.",
-            "- Señala cabeceras de seguridad ausentes o mal configuradas.",
-            "- Sugiere payloads concretos para probar en el **Repeater** o el **Fuzzer**.",
-            "- Propone reglas de **Match & Replace** útiles para las pruebas.",
+            "- Vulnerabilidades: SQLi, XSS, IDOR, SSRF, SSTI, open redirect, "
+            "auth bypass, CSRF, deserialización, etc.",
+            "- Tokens, credenciales, claves o datos sensibles expuestos.",
+            "- Cabeceras de seguridad ausentes o mal configuradas.",
+            "- Endpoints y parámetros interesantes para profundizar.",
             "",
-            "## Comandos de referencia (Leetch)",
-            "- Repeater: reenvío manual de peticiones HTTP",
-            "- Fuzzer: fuzzing con wordlists, marcadores §…§ en la petición",
-            "- Match & Replace: sustitución automática en petición/respuesta",
-            "- Intercept: pausa y modificación de peticiones en vuelo",
+            "Para cada hallazgo propón **payloads concretos** y di con qué "
+            "herramienta de Leetch probarlos (Repeater, Fuzzing, Matcher…).",
         ]
-
         return "\n".join(lines)
 
+    def _write_history_files(self, flows):
+        hist_dir = os.path.join(self._tmpdir, 'http_history')
+        if os.path.isdir(hist_dir):
+            for fn in os.listdir(hist_dir):
+                try:
+                    os.remove(os.path.join(hist_dir, fn))
+                except OSError:
+                    pass
+        else:
+            os.makedirs(hist_dir, exist_ok=True)
+
+        for fl in flows:
+            path = os.path.join(hist_dir, f'flow_{fl.id:04d}.http')
+            head = f"# Flow #{fl.id}  {fl.method} {fl.url}\n# Estado: {fl.status}  ·  Bytes: {fl.length}"
+            if fl.label:
+                head += f"  ·  Etiqueta: {fl.label}"
+            if fl.comment:
+                head += f"  ·  Nota: {fl.comment}"
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(head + "\n\n")
+                    f.write("===== REQUEST =====\n")
+                    f.write(decode(fl.raw_request))
+                    f.write("\n\n===== RESPONSE =====\n")
+                    f.write(decode_http(fl.raw_response))
+            except OSError:
+                pass
+
     def _write_context(self) -> str:
-        """Escribe CLAUDE.md y el script de análisis. Devuelve el path del directorio."""
         if not self._tmpdir or not os.path.isdir(self._tmpdir):
-            self._tmpdir = tempfile.mkdtemp(prefix='leech_ai_')
+            self._tmpdir = tempfile.mkdtemp(prefix='leetch_ai_')
 
-        # Contexto principal
-        ctx_path = os.path.join(self._tmpdir, 'CLAUDE.md')
-        with open(ctx_path, 'w', encoding='utf-8') as f:
-            f.write(self._build_context())
-
-        # Script de análisis rápido
-        script_path = os.path.join(self._tmpdir, 'analizar.sh')
-        prompt = (
-            "Eres un experto en pentesting web. "
-            "Lee el archivo CLAUDE.md y analiza el tráfico HTTP interceptado "
-            "buscando vulnerabilidades, credenciales expuestas, endpoints críticos "
-            "y sugiere ataques concretos con payloads."
-        )
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(f'#!/bin/bash\nclaude -p "{prompt}"\n')
-        os.chmod(script_path, 0o755)
-
+        flows = self._flows()
+        with open(os.path.join(self._tmpdir, 'CLAUDE.md'), 'w', encoding='utf-8') as f:
+            f.write(self._build_claude_md(flows))
+        self._write_history_files(flows)
+        self._last_count = len(flows)
         return self._tmpdir
 
-    def _refresh_context(self):
-        if self._tmpdir:
+    def _manual_refresh(self):
+        self._write_context()
+        self._notify(
+            f"[Leetch] Contexto actualizado — {self._last_count} peticiones en http_history/")
+
+    def _auto_refresh(self):
+        if not self._tmpdir:
+            return
+        if len(self._flows()) != self._last_count:
             self._write_context()
-            self._append_output(
-                "\n\033[0m[Leetch] Contexto actualizado en CLAUDE.md\n")
+
+    def _notify(self, msg: str):
+        """Inyecta un aviso de Leetch en el flujo del terminal."""
+        if self._stream is not None:
+            self._stream.feed(f"\r\n\x1b[38;5;208m{msg}\x1b[0m\r\n".encode())
+            self._dirty = True
+
+    # ------------------------------------------------------------------ #
+    # Terminal del sistema (externa)
+    # ------------------------------------------------------------------ #
+    def _open_system_terminal(self):
+        import platform
+        import shutil
+        cwd = self._write_context()
+        sysname = platform.system()
+        try:
+            if sysname == 'Darwin':
+                subprocess.Popen(['open', '-a', 'Terminal', cwd])
+            elif sysname == 'Windows':
+                subprocess.Popen('start cmd', cwd=cwd, shell=True)
+            else:
+                launched = False
+                for term in ('x-terminal-emulator', 'gnome-terminal', 'konsole',
+                             'xfce4-terminal', 'alacritty', 'kitty', 'xterm'):
+                    if shutil.which(term):
+                        if term == 'gnome-terminal':
+                            subprocess.Popen([term, '--working-directory', cwd])
+                        elif term == 'konsole':
+                            subprocess.Popen([term, '--workdir', cwd])
+                        else:
+                            subprocess.Popen([term], cwd=cwd)
+                        launched = True
+                        break
+                if not launched:
+                    self._notify("[No se encontró un emulador de terminal]")
+                    return
+        except Exception as exc:  # noqa: BLE001
+            self._notify(f"[No se pudo abrir la terminal del sistema: {exc}]")
+            return
+        self._notify(f"[Leetch] Terminal del sistema abierta en: {cwd}")
 
     # ------------------------------------------------------------------ #
     # Gestión del proceso / PTY
     # ------------------------------------------------------------------ #
     def launch(self):
-        """Lanza (o reinicia) la shell con el contexto del HTTP History."""
+        if not (_PTY_OK and _PYTE_OK):
+            return
         if self._process and self._process.poll() is None:
             self._kill_process()
-
         cwd = self._write_context()
-        self.output.clear()
+        self._screen.reset()
+        self.term.clear()
         self._start_shell(cwd)
 
     def _start_shell(self, cwd: str):
         try:
             master, slave = pty.openpty()
-        except Exception as exc:
-            self._append_output(f"[Error al crear PTY: {exc}]\n")
+        except Exception as exc:  # noqa: BLE001
+            self.term.setPlainText(f"[Error al crear PTY: {exc}]")
             return
 
         env = os.environ.copy()
         env['TERM'] = 'xterm-256color'
-        env['COLUMNS'] = '120'
-        env['LINES'] = '40'
+        env['COLORTERM'] = 'truecolor'
 
-        shell = os.environ.get('SHELL', '/bin/zsh')
-
-        # Comando inicial: muestra banner y lanza un shell interactivo
+        shell = os.environ.get('SHELL', '/bin/bash')
         banner = (
-            'echo "┌─────────────────────────────────────────────────┐" && '
-            'echo "│  Leetch AI  —  contexto del HTTP History OK  │" && '
-            'echo "└─────────────────────────────────────────────────┘" && '
-            'echo "" && '
-            f'echo "  Directorio: {cwd}" && '
-            'echo "" && '
-            'echo "  Comandos disponibles:" && '
-            'echo "    claude             → chat interactivo con contexto del historial" && '
-            'echo "    bash analizar.sh   → análisis automático del tráfico HTTP" && '
-            'echo "    cat CLAUDE.md      → ver el contexto generado" && '
-            'echo ""'
+            'printf "\\033[1;38;5;208m  Leetch AI\\033[0m  ·  shell del sistema '
+            'con contexto del HTTP History\\n" && '
+            'printf "  Directorio: ' + cwd + '\\n" && '
+            'printf "  Ejecuta: \\033[1mclaude\\033[0m  '
+            '(lee CLAUDE.md y http_history/ automáticamente)\\n\\n"'
         )
-        init = f'cd {cwd!r} && {banner} && exec {shell} --login'
+        init = f'cd {cwd!r} && {banner} && exec {shell} -i'
 
         try:
             self._process = subprocess.Popen(
                 [shell, '-c', init],
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
-                cwd=cwd,
-                env=env,
-                close_fds=True,
+                stdin=slave, stdout=slave, stderr=slave,
+                cwd=cwd, env=env, close_fds=True,
                 preexec_fn=os.setsid,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             os.close(master)
             os.close(slave)
-            self._append_output(f"[Error al lanzar shell: {exc}]\n")
+            self.term.setPlainText(f"[Error al lanzar shell: {exc}]")
             return
 
         os.close(slave)
         self._master_fd = master
+        self._update_winsize()
 
-        self.launch_btn.setText("Reiniciar shell")
-        self.refresh_btn.setEnabled(True)
-        self.ctrlc_btn.setEnabled(True)
-        self.restart_btn.setEnabled(True)
-        self.input_edit.setEnabled(True)
-        self.send_btn.setEnabled(True)
-        self.input_edit.setFocus()
-        self.status_label.setText(
-            f"Shell activa  ·  PID {self._process.pid}  ·  {cwd}")
-
+        self.status_label.setText(f"Shell activa  ·  PID {self._process.pid}")
+        self.term.setFocus()
+        self._render_timer.start()
+        self._ctx_timer.start()
         threading.Thread(target=self._read_loop, daemon=True).start()
 
+    def _update_winsize(self):
+        if self._master_fd is None or not (_PTY_OK and _PYTE_OK):
+            return
+        fm = QFontMetrics(self.term.font())
+        cw = max(1, fm.horizontalAdvance('M'))
+        ch = max(1, fm.height())
+        cols = max(20, (self.term.viewport().width() - 4) // cw)
+        rows = max(5, (self.term.viewport().height() - 4) // ch)
+        if cols == self._screen.columns and rows == self._screen.lines:
+            return
+        self._screen.resize(rows, cols)
+        self._dirty = True
+        try:
+            fcntl.ioctl(self._master_fd, termios.TIOCSWINSZ,
+                        struct.pack('HHHH', rows, cols, 0, 0))
+        except OSError:
+            pass
+
     def _read_loop(self):
-        """Hilo de lectura del PTY — envía datos al slot _append_output via signal."""
-        buf = b""
+        fd = self._master_fd
         while True:
             try:
-                r, _, _ = select.select([self._master_fd], [], [], 0.05)
+                r, _, _ = select.select([fd], [], [], 0.05)
                 if r:
-                    chunk = os.read(self._master_fd, 4096)
+                    chunk = os.read(fd, 65536)
                     if not chunk:
                         break
-                    buf += chunk
-                    # Emitir cuando tengamos datos completos (línea o sin datos pendientes)
-                    text = buf.decode('utf-8', 'replace')
-                    text = _strip_ansi(text)
-                    self._output_sig.emit(text)
-                    buf = b""
+                    self._output_sig.emit(chunk)
                 elif self._process and self._process.poll() is not None:
-                    if buf:
-                        self._output_sig.emit(buf.decode('utf-8', 'replace'))
-                    self._output_sig.emit('\n[Shell terminada]\n')
                     break
             except OSError:
                 break
-
+        self._output_sig.emit(b'\r\n[Shell terminada]\r\n')
         try:
-            os.close(self._master_fd)
+            os.close(fd)
         except OSError:
             pass
-        self._master_fd = None
+        if self._master_fd == fd:
+            self._master_fd = None
+
+    @Slot(bytes)
+    def _on_output(self, data: bytes):
+        if self._stream is not None:
+            try:
+                self._stream.feed(data)
+            except Exception:  # noqa: BLE001
+                pass
+            self._dirty = True
 
     def _write_pty(self, data: bytes):
         if self._master_fd is not None:
@@ -390,20 +514,14 @@ class AIShellTab(QWidget):
             except OSError:
                 pass
 
-    def _send_input(self):
-        text = self.input_edit.text()
-        self.input_edit.clear()
-        self._write_pty((text + '\n').encode('utf-8'))
-
-    def _send_ctrl_c(self):
-        self._write_pty(b'\x03')
-
     def _restart(self):
         self._kill_process()
-        if self._tmpdir:
+        if _PTY_OK and _PYTE_OK:
             self.launch()
 
     def _kill_process(self):
+        self._render_timer.stop()
+        self._ctx_timer.stop()
         if self._process:
             try:
                 os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
@@ -421,16 +539,65 @@ class AIShellTab(QWidget):
             self._master_fd = None
 
     # ------------------------------------------------------------------ #
-    # Slot de escritura en la terminal
+    # Render de la matriz de pyte → HTML
     # ------------------------------------------------------------------ #
-    @Slot(str)
-    def _append_output(self, text: str):
-        cursor = self.output.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.insertText(text)
-        self.output.setTextCursor(cursor)
-        self.output.ensureCursorVisible()
+    def _render_if_dirty(self):
+        if self._dirty:
+            self._dirty = False
+            self._render()
 
+    def _render(self):
+        screen = self._screen
+        if screen is None:
+            return
+        cx, cy = screen.cursor.x, screen.cursor.y
+        cursor_on = not screen.cursor.hidden
+        rows_html = []
+        for y in range(screen.lines):
+            row = screen.buffer[y]
+            parts = []
+            run = ""
+            run_style = None
+            for x in range(screen.columns):
+                cell = row[x]
+                data = cell.data or " "
+                fg = _css_color(cell.fg, TEXT)
+                bg = _css_color(cell.bg, "")
+                bold = cell.bold
+                if cell.reverse:
+                    fg, bg = (bg or BG_DEEP), (fg or TEXT)
+                if cursor_on and x == cx and y == cy:
+                    fg, bg = BG_DEEP, "#ff8c1a"
+                style = (fg, bg, bold)
+                if style != run_style:
+                    if run:
+                        parts.append(self._span(run_style, run))
+                    run = ""
+                    run_style = style
+                run += data
+            if run:
+                parts.append(self._span(run_style, run))
+            rows_html.append("".join(parts))
+
+        body = "\n".join(rows_html)
+        html = (
+            f'<pre style="margin:0;font-family:\'{MONO.family()}\',monospace;'
+            f'font-size:{MONO.pointSize()}pt;color:{TEXT};line-height:100%;">'
+            f'{body}</pre>'
+        )
+        self.term.setHtml(html)
+
+    @staticmethod
+    def _span(style, text):
+        fg, bg, bold = style
+        css = f"color:{fg};"
+        if bg:
+            css += f"background-color:{bg};"
+        if bold:
+            css += "font-weight:bold;"
+        return f'<span style="{css}">{_html.escape(text, quote=False)}</span>'
+
+    # ------------------------------------------------------------------ #
     def closeEvent(self, event):
         self._kill_process()
         super().closeEvent(event)

@@ -210,11 +210,28 @@ Doble clic en una fila emite `send_to_repeater(flow)`, conectado a `MainWindow.s
 
 ## IA Shell (ui/ai_shell.py)
 
-- Usa `pty.openpty()` + `subprocess.Popen` para una terminal real dentro de la app
-- Escribe `CLAUDE.md` en un directorio temporal con todo el HTTP History como contexto
-- La shell arranca en ese directorio → `claude` CLI lo lee automáticamente
-- `_read_loop()` corre en hilo daemon, emite `_output_sig` (Signal) para cruzar a la UI
-- ANSI stripping con `_ANSI_RE` antes de mostrar en `QPlainTextEdit`
+Terminal del sistema embebida que **auto-arranca** al mostrarse la pestaña
+(`showEvent` → `launch()` una sola vez). Pensada para lanzar `claude` (Claude
+Code) con todo el contexto de Leetch y del tráfico interceptado.
+
+- `_TerminalView(QPlainTextEdit)` es un terminal interactivo real: en
+  `keyPressEvent` traduce las teclas a bytes (flechas, Tab, Ctrl+letra, etc.)
+  y las emite por `key_bytes` hacia el PTY (no edita localmente). Copiar/pegar
+  con `Ctrl+Shift+C` / `Ctrl+Shift+V`. `feed()` pinta la salida manejando
+  `\r` (overwrite de línea), `\b` y `\n`; ANSI se elimina con `_ANSI_RE`.
+- `pty.openpty()` + `subprocess.Popen` (POSIX). El import de `pty/termios/...`
+  está guardado en `_PTY_OK`; en Windows solo se ofrece el terminal externo.
+- `_write_context()` genera un directorio temporal con:
+  - `CLAUDE.md` → descripción de Leetch, sus herramientas, objetivo de
+    auditoría e índice del HTTP History.
+  - `http_history/flow_NNNN.http` → un fichero por flow con request + response
+    (response descomprimida con `decode_http`). Da acceso **total** al tráfico.
+- `_ctx_timer` (QTimer 4 s) refresca el contexto si cambia el nº de flows.
+- `_update_winsize()` ajusta `TIOCSWINSZ` según el tamaño del widget para que
+  las TUIs (claude) se rendericen al ancho correcto.
+- Botón **«Terminal del sistema»**: abre el directorio de contexto en el
+  emulador nativo (gnome-terminal/konsole/xterm/Terminal.app/cmd) para usar
+  claude a pantalla completa con render perfecto.
 
 ---
 

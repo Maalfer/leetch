@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import itertools
 import json
 import re
 import threading
@@ -32,6 +33,15 @@ _AMBER = "#ffb454"
 _RED   = "#ff6b6b"
 
 
+class _SortItem(QTableWidgetItem):
+    """Item que ordena numéricamente cuando el texto lo permite."""
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        try:
+            return float(self.text()) < float(other.text())
+        except (ValueError, TypeError):
+            return self.text() < other.text()
+
+
 def _status_color(code: str) -> QColor | None:
     s = (code or "").strip()
     if not s[:1].isdigit():
@@ -47,7 +57,7 @@ def _status_color(code: str) -> QColor | None:
 def _parse_target(raw_text: str, fallback_host: str = "", fallback_port: int = 80,
                   fallback_tls: bool = False) -> tuple[str, int, bool]:
     """Extrae host, puerto y TLS del header Host: del texto de petición."""
-    raw = raw_text.encode("utf-8", "replace")
+    raw = raw_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8", "replace")
     headers = hm.parse_headers(raw)
     host_val = headers.get("host", fallback_host).strip()
     if ":" in host_val:
@@ -59,6 +69,33 @@ def _parse_target(raw_text: str, fallback_host: str = "", fallback_port: int = 8
             pass
     port = 443 if fallback_tls else fallback_port
     return host_val, port, port in (443, 8443) or fallback_tls
+
+
+# ──────────────────────────────────────── helpers marcadores ──
+def _parse_markers(template: str) -> list[tuple[int, int]]:
+    """Devuelve lista de (start, end) para cada par §…§ en el template."""
+    positions, i = [], 0
+    while True:
+        start = template.find(MARKER, i)
+        if start == -1:
+            break
+        end = template.find(MARKER, start + 1)
+        if end == -1:
+            break
+        positions.append((start, end))
+        i = end + 1
+    return positions
+
+
+def _substitute(template: str, markers: list[tuple[int, int]], payloads: list[str]) -> str:
+    """Sustituye cada par §…§ por el payload correspondiente."""
+    parts, prev = [], 0
+    for (start, end), payload in zip(markers, payloads):
+        parts.append(template[prev:start])
+        parts.append(payload)
+        prev = end + 1
+    parts.append(template[prev:])
+    return "".join(parts)
 
 
 # ─────────────────────────────────────────────── helpers JWT ──
@@ -89,6 +126,49 @@ def _extract_jwt(text: str) -> str | None:
 # ══════════════════════════════════════════════════════════════
 # Fuzzing
 # ══════════════════════════════════════════════════════════════
+class _WLRow(QWidget):
+    """Fila de wordlist para una posición de marcador."""
+    def __init__(self, label: str, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self._lbl = QLabel(label)
+        self._lbl.setMinimumWidth(72)
+        lay.addWidget(self._lbl)
+        self.path_edit = QLineEdit()
+        self.path_edit.setReadOnly(True)
+        self.path_edit.setPlaceholderText("Sin wordlist")
+        lay.addWidget(self.path_edit, 1)
+        btn = QPushButton("Cargar…")
+        btn.setMaximumWidth(70)
+        btn.clicked.connect(self._load)
+        lay.addWidget(btn)
+        self.count_lbl = QLabel("0")
+        self.count_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        self.count_lbl.setMinimumWidth(70)
+        lay.addWidget(self.count_lbl)
+        self.words: list[str] = []
+
+    def set_label(self, text: str):
+        self._lbl.setText(text)
+
+    def _load(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Cargar wordlist", "", "Texto (*.txt);;Todos (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = [l.rstrip("\r\n") for l in f if l.strip()]
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", str(exc))
+            return
+        self.words = lines
+        self.path_edit.setText(path)
+        self.count_lbl.setText(f"{len(lines):,} entradas")
+
+
 class _FuzzWorker(QObject):
     result   = Signal(int, str, str, int, float, bytes, bytes)  # idx, payload, status, length, ms, req, resp
     finished = Signal()
@@ -105,7 +185,7 @@ class FuzzingTab(QWidget):
         self._worker.finished.connect(self._on_finished)
         self._worker.progress.connect(self._on_progress)
         self._results: list[dict] = []
-        self._wordlist: list[str] = []
+        self._wl_rows: list[_WLRow] = []
         self._fallback_tls = use_tls
         self._build_ui()
         if raw:
@@ -123,6 +203,15 @@ class FuzzingTab(QWidget):
         self.threads_spin.setRange(1, 50)
         self.threads_spin.setValue(10)
         top.addWidget(self.threads_spin)
+        top.addWidget(QLabel("Ataque:"))
+        self.attack_combo = QComboBox()
+        self.attack_combo.addItems(["Sniper", "Pitchfork", "Cluster Bomb"])
+        self.attack_combo.setToolTip(
+            "Sniper: un marcador, una wordlist\n"
+            "Pitchfork: N marcadores, N wordlists en paralelo (zip)\n"
+            "Cluster Bomb: N marcadores, producto cartesiano de N wordlists")
+        self.attack_combo.currentTextChanged.connect(self._on_attack_type_changed)
+        top.addWidget(self.attack_combo)
         top.addStretch()
         self.start_btn = QPushButton("▶  Iniciar")
         self.start_btn.setObjectName("primaryButton")
@@ -157,23 +246,17 @@ class FuzzingTab(QWidget):
             "GET /login?user=§admin§ HTTP/1.1\r\nHost: ejemplo.com\r\n\r\n")
         self.request_edit.setContextMenuPolicy(Qt.CustomContextMenu)
         self.request_edit.customContextMenuRequested.connect(self._show_request_menu)
+        self.request_edit.textChanged.connect(self._on_template_changed)
         HTTPHighlighter(self.request_edit.document())
         ll.addWidget(self.request_edit, 3)
-        wl_lbl = QLabel("Wordlist")
+        wl_lbl = QLabel("Wordlists")
         wl_lbl.setObjectName("paneCaption")
         ll.addWidget(wl_lbl)
-        wl_row = QHBoxLayout()
-        self.wl_path_edit = QLineEdit()
-        self.wl_path_edit.setReadOnly(True)
-        self.wl_path_edit.setPlaceholderText("Sin wordlist cargada")
-        wl_row.addWidget(self.wl_path_edit)
-        self.wl_btn = QPushButton("Cargar…")
-        self.wl_btn.clicked.connect(self._load_wordlist)
-        wl_row.addWidget(self.wl_btn)
-        ll.addLayout(wl_row)
-        self.wl_count_label = QLabel("0 entradas cargadas")
-        self.wl_count_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
-        ll.addWidget(self.wl_count_label)
+        for i in range(5):
+            row = _WLRow(f"Posición {i + 1}:")
+            ll.addWidget(row)
+            self._wl_rows.append(row)
+            row.setVisible(i == 0)
         main_split.addWidget(left)
 
         # Panel derecho: filtros + tabla + preview req/resp
@@ -228,6 +311,8 @@ class FuzzingTab(QWidget):
         rh = self.result_table.horizontalHeader()
         rh.setSectionResizeMode(1, QHeaderView.Stretch)
         rh.setHighlightSections(False)
+        rh.setSortIndicatorShown(True)
+        rh.setSectionsClickable(True)
         self.result_table.setColumnWidth(0, 50)
         self.result_table.setColumnWidth(2, 70)
         self.result_table.setColumnWidth(3, 90)
@@ -296,20 +381,22 @@ class FuzzingTab(QWidget):
         if cursor.hasSelection():
             cursor.insertText(f"§{cursor.selectedText()}§")
 
-    def _load_wordlist(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Cargar wordlist", "", "Texto (*.txt);;Todos (*)")
-        if not path:
-            return
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = [l.rstrip("\r\n") for l in f if l.strip()]
-        except Exception as exc:
-            QMessageBox.critical(self, "Error al cargar", str(exc))
-            return
-        self._wordlist = lines
-        self.wl_path_edit.setText(path)
-        self.wl_count_label.setText(f"{len(lines):,} entradas cargadas")
+    def _refresh_wl_rows(self, n: int):
+        n = max(1, min(n, len(self._wl_rows)))
+        for i, row in enumerate(self._wl_rows):
+            row.setVisible(i < n)
+
+    def _on_attack_type_changed(self, mode: str):
+        if mode == "Sniper":
+            self._refresh_wl_rows(1)
+        else:
+            n = max(2, len(_parse_markers(self.request_edit.toPlainText())))
+            self._refresh_wl_rows(n)
+
+    def _on_template_changed(self):
+        if self.attack_combo.currentText() != "Sniper":
+            n = max(2, len(_parse_markers(self.request_edit.toPlainText())))
+            self._refresh_wl_rows(n)
 
     def toggle_attack(self):
         if self._running:
@@ -317,44 +404,76 @@ class FuzzingTab(QWidget):
             self.start_btn.setText("▶  Iniciar")
             return
         template = self.request_edit.toPlainText()
-        if template.count(MARKER) < 2:
+        markers = _parse_markers(template)
+        if not markers:
             QMessageBox.warning(self, "Marcador faltante",
                 f"Rodea la zona a fuzzear con {MARKER}…{MARKER}")
             return
-        if not self._wordlist:
-            QMessageBox.warning(self, "Wordlist vacía", "Carga una wordlist primero.")
-            return
+
+        mode = self.attack_combo.currentText()
+
+        if mode == "Sniper":
+            active_markers = markers[:1]
+            wl = self._wl_rows[0].words if self._wl_rows else []
+            if not wl:
+                QMessageBox.warning(self, "Wordlist vacía", "Carga una wordlist.")
+                return
+            payload_list = [(w,) for w in wl]
+
+        elif mode == "Pitchfork":
+            n = len(markers)
+            active_markers = markers
+            if len(self._wl_rows) < n or any(not r.words for r in self._wl_rows[:n]):
+                QMessageBox.warning(self, "Wordlist vacía",
+                    f"Carga una wordlist para cada una de las {n} posiciones.")
+                return
+            payload_list = list(zip(*[r.words for r in self._wl_rows[:n]]))
+
+        else:  # Cluster Bomb
+            n = len(markers)
+            active_markers = markers
+            if len(self._wl_rows) < n or any(not r.words for r in self._wl_rows[:n]):
+                QMessageBox.warning(self, "Wordlist vacía",
+                    f"Carga una wordlist para cada una de las {n} posiciones.")
+                return
+            payload_list = list(itertools.product(*[r.words for r in self._wl_rows[:n]]))
+            if len(payload_list) > 100_000:
+                from PySide6.QtWidgets import QMessageBox as _MB
+                reply = _MB.question(self, "Ataque muy grande",
+                    f"Cluster Bomb generará {len(payload_list):,} peticiones. ¿Continuar?",
+                    _MB.Yes | _MB.No)
+                if reply != _MB.Yes:
+                    return
+
         host, port, use_tls = _parse_target(template, fallback_tls=self._fallback_tls)
         if not host:
             QMessageBox.warning(self, "Host vacío",
                                 "La petición debe incluir un header Host:.")
             return
+
         self._running = True
+        self.result_table.setSortingEnabled(False)
         self.start_btn.setText("■  Detener")
-        self.progress_bar.setMaximum(len(self._wordlist))
+        self.progress_bar.setMaximum(len(payload_list))
         self.progress_bar.setValue(0)
         n_threads = self.threads_spin.value()
-        wordlist = list(self._wordlist)
-        first = template.index(MARKER)
-        second = template.index(MARKER, first + 1)
-        prefix = template[:first]
-        suffix = template[second + 1:]
         self._thread = threading.Thread(
             target=self._run_attack,
-            args=(prefix, suffix, wordlist, host, port, use_tls, n_threads),
+            args=(template, active_markers, payload_list, host, port, use_tls, n_threads),
             daemon=True)
         self._thread.start()
 
-    def _run_attack(self, prefix, suffix, wordlist, host, port, use_tls, n_threads):
+    def _run_attack(self, template, markers, payload_list, host, port, use_tls, n_threads):
         sem = threading.Semaphore(n_threads)
         lock = threading.Lock()
         done_count = [0]
-        total = len(wordlist)
+        total = len(payload_list)
 
-        def send_one(idx, payload):
+        def send_one(idx, payloads):
             if not self._running:
                 return
-            raw_text = (prefix + payload + suffix).replace("\r\n", "\n").replace("\n", "\r\n")
+            raw_text = _substitute(template, markers, list(payloads))
+            raw_text = raw_text.replace("\r\n", "\n").replace("\n", "\r\n")
             raw_req = raw_text.encode("utf-8", "replace")
             t0 = time.perf_counter()
             raw_resp = b""
@@ -371,17 +490,18 @@ class FuzzingTab(QWidget):
                 length = 0
             finally:
                 sem.release()
-            self._worker.result.emit(idx, payload, status, length, elapsed, raw_req, raw_resp)
+            payload_str = " | ".join(payloads) if len(payloads) > 1 else payloads[0]
+            self._worker.result.emit(idx, payload_str, status, length, elapsed, raw_req, raw_resp)
             with lock:
                 done_count[0] += 1
                 self._worker.progress.emit(done_count[0], total)
 
         threads = []
-        for idx, payload in enumerate(wordlist):
+        for idx, payloads in enumerate(payload_list):
             if not self._running:
                 break
             sem.acquire()
-            t = threading.Thread(target=send_one, args=(idx, payload), daemon=True)
+            t = threading.Thread(target=send_one, args=(idx, payloads), daemon=True)
             t.start()
             threads.append(t)
         for t in threads:
@@ -402,6 +522,7 @@ class FuzzingTab(QWidget):
     @Slot()
     def _on_finished(self):
         self._running = False
+        self.result_table.setSortingEnabled(True)
         self.start_btn.setText("▶  Iniciar")
         self.start_btn.setObjectName("primaryButton")
         self.start_btn.style().unpolish(self.start_btn)
@@ -428,7 +549,7 @@ class FuzzingTab(QWidget):
         self.result_table.insertRow(row)
         for col, val in enumerate([str(entry["idx"] + 1), entry["payload"],
                                     entry["status"], str(entry["length"]), f"{entry['ms']:.0f}"]):
-            item = QTableWidgetItem(val)
+            item = _SortItem(val)
             item.setData(Qt.UserRole, entry)
             if col == 2:
                 color = _status_color(entry["status"])
@@ -460,10 +581,13 @@ class FuzzingTab(QWidget):
         return True
 
     def _apply_filters(self):
+        self.result_table.setSortingEnabled(False)
         self.result_table.setRowCount(0)
         for entry in self._results:
             if self._matches_filters(entry):
                 self._add_row(entry)
+        if not self._running:
+            self.result_table.setSortingEnabled(True)
 
     def _clear_results(self):
         self._results.clear()
@@ -722,6 +846,12 @@ class JWTTab(QWidget):
         self.alg_combo.addItems(["Auto", "HS256", "HS384", "HS512"])
         self.alg_combo.setToolTip("Auto detecta el alg del header; o fuerza uno concreto")
         bf_row.addWidget(self.alg_combo)
+        bf_row.addWidget(QLabel("Hilos:"))
+        self.bf_threads_spin = QSpinBox()
+        self.bf_threads_spin.setRange(1, 50)
+        self.bf_threads_spin.setValue(10)
+        self.bf_threads_spin.setToolTip("Número de hilos paralelos para el bruteforce")
+        bf_row.addWidget(self.bf_threads_spin)
         bf_row.addWidget(QLabel("Wordlist:"))
         self.bf_wl_path = QLineEdit()
         self.bf_wl_path.setReadOnly(True)
@@ -819,24 +949,45 @@ class JWTTab(QWidget):
             f"color: {_GREEN}; font-size: 13px; font-weight: bold;")
         self.bf_progress.setMaximum(len(self._wordlist))
         self.bf_progress.setValue(0)
+        n_threads = self.bf_threads_spin.value()
         threading.Thread(
             target=self._run_bf,
-            args=(parts[0], parts[1], parts[2], list(self._wordlist), algs),
-            daemon=True
+            args=(parts[0], parts[1], parts[2], list(self._wordlist), algs, n_threads),
+            daemon=True,
         ).start()
 
-    def _run_bf(self, hdr_b64, pay_b64, sig_b64, wordlist, algs):
-        for i, secret in enumerate(wordlist):
+    def _run_bf(self, hdr_b64, pay_b64, sig_b64, wordlist, algs, n_threads):
+        sem = threading.Semaphore(n_threads)
+        lock = threading.Lock()
+        done_count = [0]
+        total = len(wordlist)
+        threads = []
+
+        def check(secret):
+            try:
+                if not self._running:
+                    return
+                for alg in algs:
+                    if _verify_hs(hdr_b64, pay_b64, sig_b64, secret, alg):
+                        self._worker.found.emit(secret)
+                        self._running = False
+                        return
+                with lock:
+                    done_count[0] += 1
+                    self._worker.progress.emit(done_count[0], total)
+            finally:
+                sem.release()
+
+        for secret in wordlist:
             if not self._running:
                 break
-            for alg in algs:
-                if _verify_hs(hdr_b64, pay_b64, sig_b64, secret, alg):
-                    self._worker.found.emit(secret)
-                    self._running = False
-                    break
-            if not self._running:
-                break
-            self._worker.progress.emit(i + 1, len(wordlist))
+            sem.acquire()
+            t = threading.Thread(target=check, args=(secret,), daemon=True)
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
         self._worker.finished.emit()
 
     @Slot(str)
@@ -885,9 +1036,9 @@ class FuzzerTab(QWidget):
         tbl.addWidget(lbl)
 
         for text, slot in [
-            ("⚡  Fuzzing",         lambda: self.add_fuzzing_tab()),
-            ("⏱  Race Conditions", lambda: self.add_race_tab()),
-            ("🔑  JWT Auditor",    lambda: self.add_jwt_tab()),
+            ("Fuzzing",         lambda: self.add_fuzzing_tab()),
+            ("Race Conditions", lambda: self.add_race_tab()),
+            ("JWT Auditor",     lambda: self.add_jwt_tab()),
         ]:
             btn = QPushButton(text)
             btn.setCursor(Qt.PointingHandCursor)

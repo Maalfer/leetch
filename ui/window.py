@@ -549,14 +549,14 @@ class MainWindow(QMainWindow):
 
         # Herramientas singleton: botones en la fila "Nueva sesión" de FuzzerTab
         self.decoder_tab = DecoderTab()
-        self.fuzzer_tab.register_tool("🧬  Decoder", self.decoder_tab, "Decoder")
+        self.fuzzer_tab.register_tool("Decoder", self.decoder_tab, "Decoder")
 
         self.ai_tab = AIShellTab()
         self.ai_tab.set_flows_getter(lambda: self.flows)
-        self.fuzzer_tab.register_tool("🤖  IA", self.ai_tab, "IA")
+        self.fuzzer_tab.register_tool("IA", self.ai_tab, "IA")
 
         self.mr_tab = MatchReplaceTab()
-        self.fuzzer_tab.register_tool("🔁  Matcher", self.mr_tab, "Matcher")
+        self.fuzzer_tab.register_tool("Matcher", self.mr_tab, "Matcher")
 
         self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
 
