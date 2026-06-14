@@ -16,6 +16,50 @@ from proxy.ca import ensure_ca, make_host_cert
 from proxy.flow import Flow, PendingRequest, set_header
 from net import http_message as hm
 
+try:
+    import h2.connection  # noqa: F401
+    _H2_AVAILABLE = True
+except ImportError:
+    _H2_AVAILABLE = False
+
+# Construir Accept-Encoding con los codecs que tenemos disponibles en Python,
+# para que el servidor nunca responda con algo que no podamos descomprimir.
+_SUPPORTED_ENCODINGS: list[str] = ["gzip", "deflate"]
+try:
+    import brotli as _brotli  # noqa: F401
+    _SUPPORTED_ENCODINGS.append("br")
+except ImportError:
+    pass
+try:
+    import zstandard as _zstd  # noqa: F401
+    _SUPPORTED_ENCODINGS.append("zstd")
+except ImportError:
+    pass
+_ACCEPT_ENCODING = ", ".join(_SUPPORTED_ENCODINGS).encode()
+
+
+def _prepare_for_browser(response: bytes) -> bytes:
+    """Normaliza la respuesta antes de enviarla al browser en modo keep-alive.
+
+    Fuerza Connection: keep-alive y añade Content-Length cuando el servidor
+    no lo incluye (p.ej. respondió con Connection: close). Sin esto el browser
+    espera el cierre de conexión que nunca llega y los recursos quedan colgados.
+    """
+    response = set_header(response, b"Connection", b"keep-alive")
+    head, sep, body = response.partition(b"\r\n\r\n")
+    if not sep:
+        return response
+    headers_lower = head.lower()
+    if b"content-length:" in headers_lower or b"transfer-encoding:" in headers_lower:
+        return response
+    # 1xx / 204 / 304 no tienen cuerpo
+    first_line = head.split(b"\r\n", 1)[0]
+    parts = first_line.split(b" ", 2)
+    sc = parts[1].strip() if len(parts) >= 2 else b""
+    if sc[:1] == b"1" or sc in (b"204", b"304"):
+        return response
+    return head + (b"\r\nContent-Length: " + str(len(body)).encode()) + sep + body
+
 
 class ProxyServer:
     """Servidor proxy multihilo con MITM HTTPS."""
@@ -208,7 +252,7 @@ class ProxyServer:
 
         client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         client_ctx.load_cert_chain(cert_path, key_path)
-        client_ctx.set_alpn_protocols(["h2", "http/1.1"])
+        client_ctx.set_alpn_protocols(["h2", "http/1.1"] if _H2_AVAILABLE else ["http/1.1"])
 
         try:
             tls_client = client_ctx.wrap_socket(client, server_side=True)
@@ -324,7 +368,7 @@ class ProxyServer:
                 flow.raw_response = response
                 flow.status = hm.status_code(response)
 
-                forwarded = set_header(response, b"Connection", b"keep-alive")
+                forwarded = _prepare_for_browser(response)
 
                 try:
                     tls_client.sendall(forwarded)
@@ -588,5 +632,14 @@ class ProxyServer:
         _head, sep, rest = raw.partition(b"\r\n")
         rebuilt = new_first + sep + rest
         lines = rebuilt.split(b"\r\n")
-        lines = [l for l in lines if not l.lower().startswith(b"proxy-connection:")]
-        return b"\r\n".join(lines)
+        out = []
+        for line in lines:
+            ll = line.lower()
+            if ll.startswith(b"proxy-connection:"):
+                continue
+            if ll.startswith(b"accept-encoding:"):
+                # Solo anunciar encodings que podemos decodificar para el History
+                out.append(b"Accept-Encoding: " + _ACCEPT_ENCODING)
+                continue
+            out.append(line)
+        return b"\r\n".join(out)

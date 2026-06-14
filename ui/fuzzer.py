@@ -14,12 +14,14 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTabWidget,
     QPushButton, QLabel, QPlainTextEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QLineEdit, QSpinBox, QCheckBox,
+    QHeaderView, QAbstractItemView, QLineEdit, QSpinBox,
     QFileDialog, QMessageBox, QFrame, QProgressBar, QComboBox, QMenu,
+    QTabBar,
 )
 
 from net.http_client import send_raw_request
-from ui.style import MONO, TEXT_DIM, decode
+from net import http_message as hm
+from ui.style import MONO, TEXT_DIM, decode, decode_http
 from ui.highlighter import HTTPHighlighter, JSONHighlighter
 
 MARKER = "§"
@@ -40,6 +42,23 @@ def _status_color(code: str) -> QColor | None:
     if c == "4": return QColor(_AMBER)
     if c == "5": return QColor(_RED)
     return QColor(TEXT_DIM)
+
+
+def _parse_target(raw_text: str, fallback_host: str = "", fallback_port: int = 80,
+                  fallback_tls: bool = False) -> tuple[str, int, bool]:
+    """Extrae host, puerto y TLS del header Host: del texto de petición."""
+    raw = raw_text.encode("utf-8", "replace")
+    headers = hm.parse_headers(raw)
+    host_val = headers.get("host", fallback_host).strip()
+    if ":" in host_val:
+        h, _, p = host_val.rpartition(":")
+        try:
+            port = int(p)
+            return h.strip(), port, port in (443, 8443)
+        except ValueError:
+            pass
+    port = 443 if fallback_tls else fallback_port
+    return host_val, port, port in (443, 8443) or fallback_tls
 
 
 # ─────────────────────────────────────────────── helpers JWT ──
@@ -71,13 +90,13 @@ def _extract_jwt(text: str) -> str | None:
 # Fuzzing
 # ══════════════════════════════════════════════════════════════
 class _FuzzWorker(QObject):
-    result   = Signal(int, str, str, int, float)
+    result   = Signal(int, str, str, int, float, bytes, bytes)  # idx, payload, status, length, ms, req, resp
     finished = Signal()
     progress = Signal(int, int)
 
 
 class FuzzingTab(QWidget):
-    def __init__(self):
+    def __init__(self, use_tls: bool = False, raw: bytes = b""):
         super().__init__()
         self._running = False
         self._thread: threading.Thread | None = None
@@ -87,7 +106,10 @@ class FuzzingTab(QWidget):
         self._worker.progress.connect(self._on_progress)
         self._results: list[dict] = []
         self._wordlist: list[str] = []
+        self._fallback_tls = use_tls
         self._build_ui()
+        if raw:
+            self.request_edit.setPlainText(decode(raw))
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -96,25 +118,12 @@ class FuzzingTab(QWidget):
 
         top = QHBoxLayout()
         top.setSpacing(8)
-        top.addWidget(QLabel("Host:"))
-        self.host_edit = QLineEdit()
-        self.host_edit.setPlaceholderText("ejemplo.com")
-        self.host_edit.setAccessibleName("Host de destino del fuzzer")
-        top.addWidget(self.host_edit, 3)
-        top.addWidget(QLabel("Puerto:"))
-        self.port_spin = QSpinBox()
-        self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(80)
-        self.port_spin.setAccessibleName("Puerto de destino del fuzzer")
-        top.addWidget(self.port_spin)
-        self.tls_check = QCheckBox("HTTPS")
-        self.tls_check.toggled.connect(lambda on: self.port_spin.setValue(443 if on else 80))
-        top.addWidget(self.tls_check)
         top.addWidget(QLabel("Hilos:"))
         self.threads_spin = QSpinBox()
         self.threads_spin.setRange(1, 50)
         self.threads_spin.setValue(10)
         top.addWidget(self.threads_spin)
+        top.addStretch()
         self.start_btn = QPushButton("▶  Iniciar")
         self.start_btn.setObjectName("primaryButton")
         self.start_btn.clicked.connect(self.toggle_attack)
@@ -134,6 +143,7 @@ class FuzzingTab(QWidget):
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(8)
 
+        # Panel izquierdo: petición + wordlist
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
@@ -166,10 +176,12 @@ class FuzzingTab(QWidget):
         ll.addWidget(self.wl_count_label)
         main_split.addWidget(left)
 
+        # Panel derecho: filtros + tabla + preview req/resp
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
+
         filter_frame = QFrame()
         filter_frame.setObjectName("controlBar")
         filter_row = QHBoxLayout(filter_frame)
@@ -199,6 +211,11 @@ class FuzzingTab(QWidget):
         self.result_count_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         filter_row.addWidget(self.result_count_label)
         rl.addWidget(filter_frame)
+
+        # Splitter vertical: tabla arriba, preview abajo
+        vsplit = QSplitter(Qt.Vertical)
+        vsplit.setHandleWidth(8)
+
         self.result_table = QTableWidget(0, 5)
         self.result_table.setHorizontalHeaderLabels(["#", "Payload", "Código", "Longitud", "ms"])
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -215,9 +232,52 @@ class FuzzingTab(QWidget):
         self.result_table.setColumnWidth(2, 70)
         self.result_table.setColumnWidth(3, 90)
         self.result_table.setColumnWidth(4, 70)
-        rl.addWidget(self.result_table)
+        self.result_table.itemSelectionChanged.connect(self._on_selection)
+        vsplit.addWidget(self.result_table)
+
+        # Preview req / resp
+        preview = QWidget()
+        pl = QVBoxLayout(preview)
+        pl.setContentsMargins(0, 4, 0, 0)
+        pl.setSpacing(0)
+        preview_split = QSplitter(Qt.Horizontal)
+        preview_split.setHandleWidth(8)
+
+        req_box = QWidget()
+        req_bl = QVBoxLayout(req_box)
+        req_bl.setContentsMargins(0, 0, 0, 0)
+        req_bl.setSpacing(4)
+        req_lbl = QLabel("Petición")
+        req_lbl.setObjectName("paneCaption")
+        req_bl.addWidget(req_lbl)
+        self.req_preview = QPlainTextEdit()
+        self.req_preview.setFont(MONO)
+        self.req_preview.setReadOnly(True)
+        HTTPHighlighter(self.req_preview.document())
+        req_bl.addWidget(self.req_preview)
+        preview_split.addWidget(req_box)
+
+        resp_box = QWidget()
+        resp_bl = QVBoxLayout(resp_box)
+        resp_bl.setContentsMargins(0, 0, 0, 0)
+        resp_bl.setSpacing(4)
+        resp_lbl = QLabel("Respuesta")
+        resp_lbl.setObjectName("paneCaption")
+        resp_bl.addWidget(resp_lbl)
+        self.resp_preview = QPlainTextEdit()
+        self.resp_preview.setFont(MONO)
+        self.resp_preview.setReadOnly(True)
+        HTTPHighlighter(self.resp_preview.document())
+        resp_bl.addWidget(self.resp_preview)
+        preview_split.addWidget(resp_box)
+
+        pl.addWidget(preview_split)
+        vsplit.addWidget(preview)
+        vsplit.setSizes([280, 250])
+
+        rl.addWidget(vsplit, 1)
         main_split.addWidget(right)
-        main_split.setSizes([420, 700])
+        main_split.setSizes([380, 720])
         root.addWidget(main_split, 1)
 
     def _show_request_menu(self, pos):
@@ -264,16 +324,15 @@ class FuzzingTab(QWidget):
         if not self._wordlist:
             QMessageBox.warning(self, "Wordlist vacía", "Carga una wordlist primero.")
             return
-        host = self.host_edit.text().strip()
+        host, port, use_tls = _parse_target(template, fallback_tls=self._fallback_tls)
         if not host:
-            QMessageBox.warning(self, "Host vacío", "Indica el host de destino.")
+            QMessageBox.warning(self, "Host vacío",
+                                "La petición debe incluir un header Host:.")
             return
         self._running = True
         self.start_btn.setText("■  Detener")
         self.progress_bar.setMaximum(len(self._wordlist))
         self.progress_bar.setValue(0)
-        port = self.port_spin.value()
-        use_tls = self.tls_check.isChecked()
         n_threads = self.threads_spin.value()
         wordlist = list(self._wordlist)
         first = template.index(MARKER)
@@ -296,22 +355,23 @@ class FuzzingTab(QWidget):
             if not self._running:
                 return
             raw_text = (prefix + payload + suffix).replace("\r\n", "\n").replace("\n", "\r\n")
-            raw = raw_text.encode("utf-8", "replace")
+            raw_req = raw_text.encode("utf-8", "replace")
             t0 = time.perf_counter()
+            raw_resp = b""
             try:
-                resp = send_raw_request(raw, host, port, use_tls)
+                raw_resp = send_raw_request(raw_req, host, port, use_tls)
                 elapsed = (time.perf_counter() - t0) * 1000
-                first_line = resp.split(b"\r\n", 1)[0].decode("latin-1", "replace")
+                first_line = raw_resp.split(b"\r\n", 1)[0].decode("latin-1", "replace")
                 parts = first_line.split(" ", 2)
                 status = parts[1] if len(parts) >= 2 else "???"
-                length = len(resp)
+                length = len(raw_resp)
             except Exception:
                 elapsed = (time.perf_counter() - t0) * 1000
                 status = "ERR"
                 length = 0
             finally:
                 sem.release()
-            self._worker.result.emit(idx, payload, status, length, elapsed)
+            self._worker.result.emit(idx, payload, status, length, elapsed, raw_req, raw_resp)
             with lock:
                 done_count[0] += 1
                 self._worker.progress.emit(done_count[0], total)
@@ -328,9 +388,13 @@ class FuzzingTab(QWidget):
             t.join()
         self._worker.finished.emit()
 
-    @Slot(int, str, str, int, float)
-    def _on_result(self, idx, payload, status, length, ms):
-        entry = {"idx": idx, "payload": payload, "status": status, "length": length, "ms": ms}
+    @Slot(int, str, str, int, float, bytes, bytes)
+    def _on_result(self, idx, payload, status, length, ms, raw_req, raw_resp):
+        entry = {
+            "idx": idx, "payload": payload, "status": status,
+            "length": length, "ms": ms,
+            "raw_req": raw_req, "raw_resp": raw_resp,
+        }
         self._results.append(entry)
         if self._matches_filters(entry):
             self._add_row(entry)
@@ -346,6 +410,18 @@ class FuzzingTab(QWidget):
     @Slot(int, int)
     def _on_progress(self, done, total):
         self.progress_bar.setValue(done)
+
+    def _on_selection(self):
+        items = self.result_table.selectedItems()
+        if not items:
+            self.req_preview.clear()
+            self.resp_preview.clear()
+            return
+        entry = items[0].data(Qt.UserRole)
+        if not entry:
+            return
+        self.req_preview.setPlainText(decode(entry.get("raw_req", b"")))
+        self.resp_preview.setPlainText(decode_http(entry.get("raw_resp", b"")))
 
     def _add_row(self, entry):
         row = self.result_table.rowCount()
@@ -392,13 +468,13 @@ class FuzzingTab(QWidget):
     def _clear_results(self):
         self._results.clear()
         self.result_table.setRowCount(0)
+        self.req_preview.clear()
+        self.resp_preview.clear()
         self.progress_bar.setValue(0)
         self.result_count_label.setText("0 resultados")
 
-    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
-        self.host_edit.setText(host)
-        self.tls_check.setChecked(use_tls)
-        self.port_spin.setValue(port)
+    def load_from_flow(self, raw: bytes, use_tls: bool = False):
+        self._fallback_tls = use_tls
         self.request_edit.setPlainText(decode(raw))
 
 
@@ -411,13 +487,16 @@ class _RaceWorker(QObject):
 
 
 class RaceTab(QWidget):
-    def __init__(self):
+    def __init__(self, use_tls: bool = False, raw: bytes = b""):
         super().__init__()
         self._running = False
         self._worker = _RaceWorker()
         self._worker.result.connect(self._on_result)
         self._worker.finished.connect(self._on_finished)
+        self._fallback_tls = use_tls
         self._build_ui()
+        if raw:
+            self.request_edit.setPlainText(decode(raw))
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -426,25 +505,13 @@ class RaceTab(QWidget):
 
         top = QHBoxLayout()
         top.setSpacing(8)
-        top.addWidget(QLabel("Host:"))
-        self.host_edit = QLineEdit()
-        self.host_edit.setPlaceholderText("ejemplo.com")
-        self.host_edit.setAccessibleName("Host de destino")
-        top.addWidget(self.host_edit, 3)
-        top.addWidget(QLabel("Puerto:"))
-        self.port_spin = QSpinBox()
-        self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(80)
-        top.addWidget(self.port_spin)
-        self.tls_check = QCheckBox("HTTPS")
-        self.tls_check.toggled.connect(lambda on: self.port_spin.setValue(443 if on else 80))
-        top.addWidget(self.tls_check)
-        top.addWidget(QLabel("Peticiones:"))
+        top.addWidget(QLabel("Peticiones simultáneas:"))
         self.count_spin = QSpinBox()
         self.count_spin.setRange(2, 500)
         self.count_spin.setValue(20)
         self.count_spin.setToolTip("Número de peticiones a lanzar simultáneamente")
         top.addWidget(self.count_spin)
+        top.addStretch()
         self.start_btn = QPushButton("▶  Lanzar")
         self.start_btn.setObjectName("primaryButton")
         self.start_btn.clicked.connect(self.launch)
@@ -506,13 +573,12 @@ class RaceTab(QWidget):
         if not raw_text.strip():
             QMessageBox.warning(self, "Petición vacía", "Escribe la petición a enviar.")
             return
-        host = self.host_edit.text().strip()
+        host, port, use_tls = _parse_target(raw_text, fallback_tls=self._fallback_tls)
         if not host:
-            QMessageBox.warning(self, "Host vacío", "Indica el host de destino.")
+            QMessageBox.warning(self, "Host vacío",
+                                "La petición debe incluir un header Host:.")
             return
         count = self.count_spin.value()
-        port = self.port_spin.value()
-        use_tls = self.tls_check.isChecked()
         raw = raw_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8", "replace")
         self._running = True
         self.start_btn.setEnabled(False)
@@ -571,10 +637,8 @@ class RaceTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_lbl.setText("Resultados")
 
-    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
-        self.host_edit.setText(host)
-        self.tls_check.setChecked(use_tls)
-        self.port_spin.setValue(port)
+    def load_from_flow(self, raw: bytes, use_tls: bool = False):
+        self._fallback_tls = use_tls
         self.request_edit.setPlainText(decode(raw))
 
 
@@ -791,7 +855,7 @@ class JWTTab(QWidget):
             self.bf_result_lbl.setStyleSheet(f"color: {_AMBER}; font-size: 12px;")
             self.bf_result_lbl.setText("Secreto no encontrado con la wordlist dada.")
 
-    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
+    def load_from_flow(self, raw: bytes, use_tls: bool = False):
         text = decode(raw)
         jwt = _extract_jwt(text)
         if jwt:
@@ -810,7 +874,6 @@ class FuzzerTab(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # Barra de herramientas siempre visible con los 3 modos
         tool_bar = QFrame()
         tool_bar.setObjectName("controlBar")
         tbl = QHBoxLayout(tool_bar)
@@ -844,30 +907,33 @@ class FuzzerTab(QWidget):
         self._tabs.removeTab(idx)
 
     # ── API pública ──────────────────────────────────────────
-    def add_fuzzing_tab(self, host="", port=80, use_tls=False, raw=b"") -> FuzzingTab:
-        tab = FuzzingTab()
-        if raw:
-            tab.load_from_flow(host, port, use_tls, raw)
+    def add_fuzzing_tab(self, raw: bytes = b"", use_tls: bool = False) -> FuzzingTab:
+        tab = FuzzingTab(use_tls=use_tls, raw=raw)
         idx = self._tabs.addTab(tab, f"Fuzzing {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 
-    def add_race_tab(self, host="", port=80, use_tls=False, raw=b"") -> RaceTab:
-        tab = RaceTab()
-        if raw:
-            tab.load_from_flow(host, port, use_tls, raw)
+    def add_race_tab(self, raw: bytes = b"", use_tls: bool = False) -> RaceTab:
+        tab = RaceTab(use_tls=use_tls, raw=raw)
         idx = self._tabs.addTab(tab, f"Race {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 
-    def add_jwt_tab(self, host="", port=80, use_tls=False, raw=b"") -> JWTTab:
+    def add_jwt_tab(self, raw: bytes = b"", use_tls: bool = False) -> JWTTab:
         tab = JWTTab()
         if raw:
-            tab.load_from_flow(host, port, use_tls, raw)
+            tab.load_from_flow(raw, use_tls)
         idx = self._tabs.addTab(tab, f"JWT {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 
-    def load_from_flow(self, host: str, port: int, use_tls: bool, raw: bytes):
-        """Compatibilidad: abre una pestaña de Fuzzing."""
-        self.add_fuzzing_tab(host, port, use_tls, raw)
+    def add_tool_tab(self, widget: QWidget, name: str) -> int:
+        """Añade una pestaña fija (no cerrable) a la barra de herramientas."""
+        idx = self._tabs.addTab(widget, name)
+        self._tabs.tabBar().setTabButton(idx, QTabBar.RightSide, None)
+        self._tabs.tabBar().setTabButton(idx, QTabBar.LeftSide, None)
+        return idx
+
+    def load_from_flow(self, raw: bytes, use_tls: bool = False):
+        """Abre una pestaña de Fuzzing con el flow dado."""
+        self.add_fuzzing_tab(raw=raw, use_tls=use_tls)

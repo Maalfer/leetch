@@ -5,10 +5,10 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QTextDocument, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QPushButton, QLabel, QPlainTextEdit, QCheckBox, QSpinBox, QLineEdit,
+    QPushButton, QLabel, QPlainTextEdit, QLineEdit,
     QMessageBox, QMenu,
 )
 
@@ -30,31 +30,47 @@ class RepeaterTab(QWidget):
                  raw=b""):
         super().__init__()
         self.worker = worker
+        self._host = host
+        self._port = port
+        self._use_tls = use_tls
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        # Fila de destino
+        # Fila superior: búsqueda | TLS | Enviar
         target_row = QHBoxLayout()
         target_row.setSpacing(8)
-        target_row.addWidget(QLabel("Host:"))
-        self.host_edit = QLineEdit(host)
-        self.host_edit.setAccessibleName("Host de destino")
-        self.host_edit.setToolTip("Host o dirección del servidor de destino")
-        target_row.addWidget(self.host_edit, 3)
-        target_row.addWidget(QLabel("Puerto:"))
-        self.port_spin = QSpinBox()
-        self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(port)
-        self.port_spin.setAccessibleName("Puerto de destino")
-        self.port_spin.setToolTip("Puerto del servidor de destino (1-65535)")
-        target_row.addWidget(self.port_spin)
-        self.tls_check = QCheckBox("HTTPS/TLS")
-        self.tls_check.setChecked(use_tls)
-        self.tls_check.setAccessibleName("Usar HTTPS/TLS")
-        self.tls_check.setToolTip("Marca para enviar la petición cifrada por TLS (HTTPS)")
-        target_row.addWidget(self.tls_check)
+
+        target_row.addWidget(QLabel("Buscar:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Buscar en la petición…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setAccessibleName("Buscar en la petición")
+        self.search_edit.setToolTip(
+            "Busca texto dentro de la petición (Enter = siguiente)"
+        )
+        self.search_edit.returnPressed.connect(self._find_next)
+        target_row.addWidget(self.search_edit, 2)
+
+        prev_btn = QPushButton("↑")
+        prev_btn.setObjectName("searchNavBtn")
+        prev_btn.setFixedSize(26, 26)
+        prev_btn.setCursor(Qt.PointingHandCursor)
+        prev_btn.setToolTip("Coincidencia anterior")
+        prev_btn.clicked.connect(self._find_prev)
+        target_row.addWidget(prev_btn)
+
+        next_btn = QPushButton("↓")
+        next_btn.setObjectName("searchNavBtn")
+        next_btn.setFixedSize(26, 26)
+        next_btn.setCursor(Qt.PointingHandCursor)
+        next_btn.setToolTip("Siguiente coincidencia")
+        next_btn.clicked.connect(self._find_next)
+        target_row.addWidget(next_btn)
+
+        target_row.addStretch()
+
         self.send_btn = QPushButton("Enviar")
         self.send_btn.setObjectName("primaryButton")
         self.send_btn.setCursor(Qt.PointingHandCursor)
@@ -63,6 +79,7 @@ class RepeaterTab(QWidget):
         self.send_btn.setShortcut("Ctrl+Return")
         self.send_btn.clicked.connect(self.send)
         target_row.addWidget(self.send_btn)
+
         layout.addLayout(target_row)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -105,9 +122,7 @@ class RepeaterTab(QWidget):
         splitter.setSizes([500, 500])
         layout.addWidget(splitter)
 
-        self.setTabOrder(self.host_edit, self.port_spin)
-        self.setTabOrder(self.port_spin, self.tls_check)
-        self.setTabOrder(self.tls_check, self.send_btn)
+        self.setTabOrder(self.search_edit, self.send_btn)
         self.setTabOrder(self.send_btn, self.request_edit)
         self.setTabOrder(self.request_edit, self.response_view)
 
@@ -122,26 +137,55 @@ class RepeaterTab(QWidget):
         menu.addMenu(fuzzer_menu)
         menu.exec(self.request_edit.viewport().mapToGlobal(pos))
 
+    def _parse_target(self) -> tuple[str, int, bool]:
+        """Extrae host, puerto y TLS del header Host: de la petición actual."""
+        raw = self.request_edit.toPlainText().encode("utf-8", "replace")
+        headers = hm.parse_headers(raw)
+        host_val = headers.get("host", self._host).strip()
+        if ":" in host_val:
+            h, _, p = host_val.rpartition(":")
+            try:
+                port = int(p)
+                return h.strip(), port, port in (443, 8443)
+            except ValueError:
+                pass
+        port = self._port if self._port > 0 else 80
+        return host_val, port, port in (443, 8443) or self._use_tls
+
+    def _find_next(self):
+        term = self.search_edit.text()
+        if not term:
+            return
+        if not self.request_edit.find(term):
+            cur = self.request_edit.textCursor()
+            cur.movePosition(QTextCursor.MoveOperation.Start)
+            self.request_edit.setTextCursor(cur)
+            self.request_edit.find(term)
+
+    def _find_prev(self):
+        term = self.search_edit.text()
+        if not term:
+            return
+        if not self.request_edit.find(term, QTextDocument.FindFlag.FindBackward):
+            cur = self.request_edit.textCursor()
+            cur.movePosition(QTextCursor.MoveOperation.End)
+            self.request_edit.setTextCursor(cur)
+            self.request_edit.find(term, QTextDocument.FindFlag.FindBackward)
+
     def _emit_send_to(self, tool: str):
         raw_text = self.request_edit.toPlainText()
         raw = raw_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8", "replace")
-        self.send_to_tool.emit(
-            tool,
-            self.host_edit.text().strip(),
-            self.port_spin.value(),
-            self.tls_check.isChecked(),
-            raw,
-        )
+        host, port, use_tls = self._parse_target()
+        self.send_to_tool.emit(tool, host, port, use_tls, raw)
 
     def send(self):
         raw_text = self.request_edit.toPlainText()
         raw_text = raw_text.replace("\r\n", "\n").replace("\n", "\r\n")
         raw = raw_text.encode("utf-8", "replace")
-        host = self.host_edit.text().strip()
-        port = self.port_spin.value()
-        use_tls = self.tls_check.isChecked()
+        host, port, use_tls = self._parse_target()
         if not host:
-            QMessageBox.warning(self, "Falta el host", "Indica el host de destino.")
+            QMessageBox.warning(self, "Falta el host",
+                                "La petición debe incluir un header Host:.")
             return
 
         self.send_btn.setEnabled(False)

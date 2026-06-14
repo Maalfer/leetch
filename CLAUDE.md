@@ -46,18 +46,25 @@ ui/
 
 ## Orden de pestañas (window.py `_build_ui`)
 
-| Índice | Nombre        | Widget          |
-|--------|---------------|-----------------|
-| 0      | Intercept     | InterceptTab    |
-| 1      | HTTP History  | (inline)        |
-| 2      | Repeater      | RepeaterTab×N   |
-| 3      | Tools         | FuzzerTab       |
-| 4      | IA            | AIShellTab      |
-| 5      | Matcher       | MatchReplaceTab |
-| 6      | Decoder       | DecoderTab      |
-| 7      | Site Map      | SiteMapTab      |
+| Índice | Nombre        | Widget                    |
+|--------|---------------|---------------------------|
+| 0      | Intercept     | InterceptTab              |
+| 1      | HTTP History  | (inline)                  |
+| 2      | Repeater      | RepeaterTab×N             |
+| 3      | Tools         | QTabWidget `tools_tabs`   |
+| 4      | Matcher       | MatchReplaceTab           |
+| 5      | Site Map      | SiteMapTab                |
+
+**Sub-tabs de Tools** (`self.tools_tabs`, objectName `"innerTabWidget"`):
+
+| Sub-índice | Nombre  | Widget     |
+|------------|---------|------------|
+| 0          | Fuzzer  | FuzzerTab  |
+| 1          | Decoder | DecoderTab |
+| 2          | IA      | AIShellTab |
 
 Para navegar a una pestaña: `self.tabs.setCurrentIndex(N)`.
+Para navegar a un sub-tab de Tools: `self.tabs.setCurrentIndex(3); self.tools_tabs.setCurrentIndex(N)`.
 
 ---
 

@@ -164,6 +164,32 @@ QTabWidget::pane {{
     background-color: {bg_base};
     top: -1px;
 }}
+QTabWidget#innerTabWidget::pane {{
+    border: 1px solid {border};
+    border-radius: 6px;
+    background-color: {bg_deep};
+    top: -1px;
+}}
+QTabWidget#innerTabWidget > QTabBar::tab {{
+    background-color: {bg_deep};
+    color: {text_dim};
+    padding: 5px 14px;
+    margin-right: 2px;
+    border: 1px solid {border};
+    border-bottom: none;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    font-size: 12px;
+}}
+QTabWidget#innerTabWidget > QTabBar::tab:selected {{
+    background-color: {bg_base};
+    color: {text};
+    border-bottom: 2px solid {accent};
+}}
+QTabWidget#innerTabWidget > QTabBar::tab:hover:!selected {{
+    background-color: {bg_panel};
+    color: {text};
+}}
 QTabBar::tab {{
     background-color: {bg_panel};
     color: {text_dim};
@@ -183,8 +209,74 @@ QTabBar::tab:hover:!selected {{
     background-color: {bg_panel_hover};
     color: {text};
 }}
-QTabBar::close-button {{
-    subcontrol-position: right;
+QPushButton#tabCloseBtn {{
+    background: transparent;
+    color: {text_dim};
+    border: none;
+    border-radius: 3px;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 0px;
+    margin: 0px 2px;
+}}
+QPushButton#tabCloseBtn:hover {{
+    background-color: rgba(255, 107, 107, 0.22);
+    color: #ff6b6b;
+}}
+QPushButton#tabCloseBtn:pressed {{
+    background-color: rgba(255, 107, 107, 0.4);
+    color: #ff6b6b;
+}}
+
+QPushButton#addTabBtn {{
+    background: transparent;
+    color: {text_dim};
+    border: none;
+    border-radius: 5px;
+    font-size: 17px;
+    font-weight: bold;
+    padding: 0px 4px;
+    margin: 2px 4px;
+}}
+QPushButton#addTabBtn:hover {{
+    background-color: {bg_panel};
+    color: {accent};
+}}
+QPushButton#addTabBtn:pressed {{
+    background-color: {accent};
+    color: #ffffff;
+}}
+
+QLineEdit#panelSearch {{
+    background-color: {bg_deep};
+    color: {text};
+    border: 1px solid {border};
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 11px;
+}}
+QLineEdit#panelSearch:focus {{
+    border-color: {accent};
+}}
+QLabel#searchCount {{
+    color: {text_dim};
+    font-size: 11px;
+}}
+QPushButton#searchNavBtn {{
+    background-color: {bg_panel};
+    color: {text_dim};
+    border: 1px solid {border};
+    border-radius: 5px;
+    font-size: 12px;
+    padding: 0px;
+}}
+QPushButton#searchNavBtn:hover {{
+    background-color: {bg_panel_hover};
+    color: {text};
+    border-color: {border_hover};
+}}
+QPushButton#searchNavBtn:pressed {{
+    background-color: {bg_deep};
 }}
 
 QPushButton {{
@@ -279,6 +371,24 @@ QTableWidget::item {{
 QTableWidget::item:selected {{
     background-color: {selection};
     color: #ffffff;
+}}
+QTreeWidget {{
+    background-color: {bg_deep};
+    color: {text};
+    border: 1px solid {border};
+    border-radius: 8px;
+    alternate-background-color: #20232a;
+}}
+QTreeWidget::item {{
+    padding: 3px 6px;
+    border: none;
+}}
+QTreeWidget::item:selected {{
+    background-color: {selection};
+    color: #ffffff;
+}}
+QTreeWidget::item:hover:!selected {{
+    background-color: {bg_panel};
 }}
 QHeaderView::section {{
     background-color: {bg_panel};

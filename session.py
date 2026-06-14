@@ -76,9 +76,6 @@ def session_to_dict(window) -> dict:
         if not hasattr(tab, "request_edit"):
             continue
         repeater.append({
-            "host": tab.host_edit.text(),
-            "port": tab.port_spin.value(),
-            "use_tls": tab.tls_check.isChecked(),
             "request": tab.request_edit.toPlainText(),
             "response": tab.response_view.toPlainText(),
         })
@@ -142,17 +139,11 @@ def restore_session(window, data: dict) -> None:
     for rd in data.get("repeater", []) or []:
         request_text = rd.get("request", "")
         tab = window.add_repeater_tab()
-        tab.host_edit.setText(str(rd.get("host", "")))
-        try:
-            tab.port_spin.setValue(int(rd.get("port", 80)))
-        except (TypeError, ValueError):
-            pass
-        tab.tls_check.setChecked(bool(rd.get("use_tls", False)))
         tab.request_edit.setPlainText(request_text)
         response_text = rd.get("response", "")
         if response_text:
             tab.response_view.setPlainText(response_text)
-        host = rd.get("host", "")
+        host = rd.get("host", "")  # campo heredado de sesiones antiguas
         if host:
             rep_tabs.setTabText(rep_tabs.indexOf(tab), host[:25])
 

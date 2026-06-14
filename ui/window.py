@@ -5,17 +5,17 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
+
 import threading
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtGui import QAction, QBrush, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLineEdit, QLabel, QTabWidget, QTableWidget, QTableWidgetItem, QSplitter,
+    QLineEdit, QLabel, QTabWidget, QTabBar, QTableWidget, QTableWidgetItem, QSplitter,
     QPlainTextEdit, QSpinBox, QHeaderView, QMenu, QMessageBox,
     QAbstractItemView, QFrame, QFileDialog, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QInputDialog,
+    QFormLayout, QCheckBox, QInputDialog, QStyledItemDelegate,
 )
 
 from proxy import ProxyServer, Flow, CA_CERT_FILE
@@ -34,15 +34,26 @@ import session
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
 
-# Colores de fondo (tintes oscuros) para las etiquetas del History
+# Colores de fondo para las etiquetas del History (tintes visibles sobre fondo oscuro)
 _LABEL_BG: dict[str, str] = {
-    "rojo":     "#3d1a1a",
-    "naranja":  "#3d2a0f",
-    "amarillo": "#3d3512",
-    "verde":    "#133d1a",
-    "azul":     "#0f2340",
-    "morado":   "#251340",
+    "rojo":     "#6b1515",
+    "naranja":  "#6b4010",
+    "amarillo": "#6b5e10",
+    "verde":    "#15602a",
+    "azul":     "#10406b",
+    "morado":   "#40106b",
 }
+
+
+class _BgDelegate(QStyledItemDelegate):
+    """Delegado que garantiza que el BackgroundRole de los items se pinta
+    correctamente aunque haya un stylesheet global activo."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        bg = index.data(Qt.BackgroundRole)
+        if bg is not None:
+            option.backgroundBrush = bg if isinstance(bg, QBrush) else QBrush(bg)
 _LABEL_DISPLAY: dict[str, str] = {
     "rojo":     "Rojo",
     "naranja":  "Naranja",
@@ -498,7 +509,6 @@ class MainWindow(QMainWindow):
             "<h3>Leech</h3>"
             "<p>Mini proxy de interceptación HTTP/HTTPS con Intercept, History, "
             "Repeater, Tools, Matcher, Decoder y Site Map.</p>"
-            "<p>Inspirado en Burp Suite, para aprendizaje y pruebas locales.</p>"
         )
 
     # ------------------------------------------------------------------ #
@@ -514,12 +524,12 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         outer.addWidget(self.tabs)
 
-        # Orden de pestañas:
-        #   0 → Intercept        (nuevo, primero)
+        #   0 → Intercept
         #   1 → HTTP History
         #   2 → Repeater
-        #   3 → Fuzzer
-        #   4 → Match & Replace  (nuevo, último)
+        #   3 → Tools  (FuzzerTab; sus sub-tabs internos incluyen
+        #               Decoder, IA y Matcher como tabs fijos no cerrables)
+        #   4 → Site Map
         self.intercept_tab = InterceptTab()
         self.tabs.addTab(self.intercept_tab, "Intercept")
 
@@ -527,24 +537,121 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_repeater_container(), "Repeater")
 
         self.fuzzer_tab = FuzzerTab()
-        self.tabs.addTab(self.fuzzer_tab, "Tools")
 
-        self.ai_tab = AIShellTab()                          # índice 4
+        # Tabs fijos no cerrables dentro de FuzzerTab (mismo nivel que Fuzzing/Race/JWT)
+        self.decoder_tab = DecoderTab()
+        self._idx_decoder = self.fuzzer_tab.add_tool_tab(self.decoder_tab, "Decoder")
+
+        self.ai_tab = AIShellTab()
         self.ai_tab.set_flows_getter(lambda: self.flows)
-        self.tabs.addTab(self.ai_tab, "IA")
+        self._idx_ia = self.fuzzer_tab.add_tool_tab(self.ai_tab, "IA")
 
-        self.mr_tab = MatchReplaceTab()                     # índice 5
-        self.tabs.addTab(self.mr_tab, "Matcher")
+        self.mr_tab = MatchReplaceTab()
+        self._idx_matcher = self.fuzzer_tab.add_tool_tab(self.mr_tab, "Matcher")
 
-        self.decoder_tab = DecoderTab()                     # índice 6
-        self.tabs.addTab(self.decoder_tab, "Decoder")
+        self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
 
-        self.sitemap_tab = SiteMapTab()                     # índice 7
+        self.sitemap_tab = SiteMapTab()                     # índice 4
         self.sitemap_tab.set_flows_getter(lambda: self.flows)
         self.sitemap_tab.send_to_repeater.connect(self.send_to_repeater)
         self.tabs.addTab(self.sitemap_tab, "Site Map")
 
         self.add_repeater_tab()  # pestaña inicial vacía en el Repeater
+
+    def _attach_panel_search(self, layout: QVBoxLayout, title: str,
+                              editor: QPlainTextEdit) -> QLineEdit:
+        """Añade una fila [Título] ·· [Buscar…] [N/M] [↑][↓] al layout y devuelve el QLineEdit."""
+        from PySide6.QtGui import QTextCharFormat, QColor
+        from PySide6.QtWidgets import QTextEdit
+
+        hdr = QHBoxLayout()
+        hdr.setSpacing(4)
+        caption = QLabel(title)
+        caption.setObjectName("paneCaption")
+        hdr.addWidget(caption)
+        hdr.addStretch()
+
+        entry = QLineEdit()
+        entry.setPlaceholderText("Buscar…")
+        entry.setFixedWidth(150)
+        entry.setObjectName("panelSearch")
+        entry.setToolTip("Buscar en el texto (Enter = siguiente, Shift+Enter = anterior)")
+        hdr.addWidget(entry)
+
+        count_lbl = QLabel("")
+        count_lbl.setObjectName("searchCount")
+        count_lbl.setFixedWidth(52)
+        count_lbl.setAlignment(Qt.AlignCenter)
+        hdr.addWidget(count_lbl)
+
+        btn_prev = QPushButton("↑")
+        btn_next = QPushButton("↓")
+        for b in (btn_prev, btn_next):
+            b.setFixedSize(22, 22)
+            b.setObjectName("searchNavBtn")
+            b.setCursor(Qt.PointingHandCursor)
+        hdr.addWidget(btn_prev)
+        hdr.addWidget(btn_next)
+        layout.addLayout(hdr)
+
+        _FMT_ALL = QTextCharFormat()
+        _FMT_ALL.setBackground(QColor("#6b4010"))
+
+        _FMT_CUR = QTextCharFormat()
+        _FMT_CUR.setBackground(QColor(ACCENT))
+        _FMT_CUR.setForeground(QColor("#000000"))
+
+        state = {"matches": [], "idx": 0}
+
+        def _apply():
+            matches = state["matches"]
+            idx = state["idx"]
+            sels = []
+            for i, cur in enumerate(matches):
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cur
+                sel.format = _FMT_CUR if i == idx else _FMT_ALL
+                sels.append(sel)
+            editor.setExtraSelections(sels)
+            if matches:
+                editor.setTextCursor(matches[idx])
+                editor.ensureCursorVisible()
+                count_lbl.setText(f"{idx + 1}/{len(matches)}")
+            else:
+                count_lbl.setText("0" if entry.text() else "")
+
+        def _search(term: str):
+            state["matches"].clear()
+            state["idx"] = 0
+            editor.setExtraSelections([])
+            if not term:
+                count_lbl.setText("")
+                return
+            doc = editor.document()
+            cur = doc.find(term)
+            while not cur.isNull():
+                state["matches"].append(cur)
+                cur = doc.find(term, cur)
+            _apply()
+
+        def _next():
+            if not state["matches"]:
+                return
+            state["idx"] = (state["idx"] + 1) % len(state["matches"])
+            _apply()
+
+        def _prev():
+            if not state["matches"]:
+                return
+            state["idx"] = (state["idx"] - 1) % len(state["matches"])
+            _apply()
+
+        entry.textChanged.connect(_search)
+        entry.returnPressed.connect(_next)
+        btn_next.clicked.connect(_next)
+        btn_prev.clicked.connect(_prev)
+
+        return entry
 
     def _build_history_tab(self) -> QWidget:
         container = QWidget()
@@ -578,6 +685,7 @@ class MainWindow(QMainWindow):
         self.table.itemDoubleClicked.connect(lambda _: self._send_selected_to_repeater())
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_history_menu)
+        self.table.setItemDelegate(_BgDelegate(self.table))
 
         action_row = QHBoxLayout()
         self.to_repeater_btn = QPushButton("Enviar al Repeater →")
@@ -598,11 +706,9 @@ class MainWindow(QMainWindow):
         self.scope_btn.clicked.connect(self._open_scope_dialog)
         action_row.addWidget(self.scope_btn)
 
-        action_row.addStretch()
-
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Buscar en historial…")
-        self.search_edit.setFixedWidth(260)
+        self.search_edit.setPlaceholderText("Filtrar historial…")
+        self.search_edit.setFixedWidth(230)
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setAccessibleName("Buscador del historial HTTP")
         self.search_edit.setToolTip(
@@ -620,10 +726,7 @@ class MainWindow(QMainWindow):
         req_box = QWidget()
         req_layout = QVBoxLayout(req_box)
         req_layout.setContentsMargins(0, 0, 0, 0)
-        req_layout.setSpacing(6)
-        req_caption = QLabel("Petición")
-        req_caption.setObjectName("paneCaption")
-        req_layout.addWidget(req_caption)
+        req_layout.setSpacing(0)
         self.hist_request = QPlainTextEdit()
         self.hist_request.setFont(MONO)
         self.hist_request.setReadOnly(True)
@@ -635,10 +738,7 @@ class MainWindow(QMainWindow):
         resp_box = QWidget()
         resp_layout = QVBoxLayout(resp_box)
         resp_layout.setContentsMargins(0, 0, 0, 0)
-        resp_layout.setSpacing(6)
-        resp_caption = QLabel("Respuesta")
-        resp_caption.setObjectName("paneCaption")
-        resp_layout.addWidget(resp_caption)
+        resp_layout.setSpacing(0)
         self.hist_response = QPlainTextEdit()
         self.hist_response.setFont(MONO)
         self.hist_response.setReadOnly(True)
@@ -651,18 +751,28 @@ class MainWindow(QMainWindow):
         splitter.addWidget(detail)
         splitter.setSizes([300, 500])
 
+        # Barra inferior: buscadores de texto para petición y respuesta
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(0, 4, 0, 0)
+        bottom_row.setSpacing(6)
+        self._req_search = self._attach_panel_search(bottom_row, "Petición:", self.hist_request)
+        sep_v = QFrame()
+        sep_v.setFrameShape(QFrame.VLine)
+        sep_v.setFixedWidth(1)
+        bottom_row.addWidget(sep_v)
+        self._resp_search = self._attach_panel_search(bottom_row, "Respuesta:", self.hist_response)
+
         layout.addLayout(action_row)
         layout.addWidget(splitter)
+        layout.addLayout(bottom_row)
         return container
 
     def _build_repeater_container(self) -> QWidget:
         self.repeater_tabs = QTabWidget()
-        self.repeater_tabs.setTabsClosable(True)
-        self.repeater_tabs.tabCloseRequested.connect(
-            lambda i: self.repeater_tabs.removeTab(i))
 
         add_tab_btn = QPushButton("+")
-        add_tab_btn.setFixedSize(26, 26)
+        add_tab_btn.setObjectName("addTabBtn")
+        add_tab_btn.setFixedSize(28, 28)
         add_tab_btn.setCursor(Qt.PointingHandCursor)
         add_tab_btn.setAccessibleName("Nueva pestaña de Repeater")
         add_tab_btn.setToolTip("Abre una pestaña de Repeater vacía")
@@ -727,6 +837,8 @@ class MainWindow(QMainWindow):
         self.to_repeater_btn.setEnabled(has_flow)
         if not has_flow:
             return
+        self._req_search.clear()
+        self._resp_search.clear()
         self.hist_request.setPlainText(decode(flow.raw_request))
         self.hist_response.setPlainText(decode_http(flow.raw_response))
 
@@ -747,10 +859,6 @@ class MainWindow(QMainWindow):
                 lambda checked=False, t=tool: self._send_flow_to_tool(flow, t))
             tools_menu.addAction(act)
         menu.addMenu(tools_menu)
-
-        send_mr = QAction("Enviar al Matcher", self)
-        send_mr.triggered.connect(lambda: self.send_to_match_replace(flow))
-        menu.addAction(send_mr)
 
         send_dec = QAction("Enviar al Decoder", self)
         send_dec.setToolTip("Abre la petición en el Decoder para transformar y decodificar valores")
@@ -786,6 +894,12 @@ class MainWindow(QMainWindow):
         comment_action.setToolTip("Añade o edita un comentario visible en el historial")
         comment_action.triggered.connect(lambda: self._edit_comment(flow))
         menu.addAction(comment_action)
+
+        menu.addSeparator()
+        clear_action = QAction("Limpiar historial", self)
+        clear_action.setToolTip("Elimina todas las peticiones del historial")
+        clear_action.triggered.connect(self._clear_history)
+        menu.addAction(clear_action)
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
@@ -872,7 +986,7 @@ class MainWindow(QMainWindow):
                 if bg:
                     item.setBackground(QColor(bg))
                 else:
-                    item.setData(Qt.BackgroundRole, None)
+                    item.setBackground(QBrush())
 
     def _set_flow_label(self, flow: Flow, label: str):
         flow.label = label
@@ -894,6 +1008,15 @@ class MainWindow(QMainWindow):
             item = self.table.item(row, 6)
             if item:
                 item.setText(flow.comment)
+
+    def _clear_history(self):
+        self.flows.clear()
+        self._flow_by_id.clear()
+        self.table.setRowCount(0)
+        self.hist_request.clear()
+        self.hist_response.clear()
+        if hasattr(self, "sitemap_tab"):
+            self.sitemap_tab.clear()
 
     # ------------------------------------------------------------------ #
     # Copiar como curl
@@ -932,6 +1055,17 @@ class MainWindow(QMainWindow):
             tab = RepeaterTab(self.rep_worker)
             title = "Nueva"
         index = self.repeater_tabs.addTab(tab, title[:25])
+
+        close_btn = QPushButton("×")
+        close_btn.setObjectName("tabCloseBtn")
+        close_btn.setFixedSize(18, 18)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setToolTip("Cerrar pestaña")
+        close_btn.clicked.connect(
+            lambda checked=False, t=tab: self.repeater_tabs.removeTab(
+                self.repeater_tabs.indexOf(t)))
+        self.repeater_tabs.tabBar().setTabButton(index, QTabBar.RightSide, close_btn)
+
         self.repeater_tabs.setCurrentIndex(index)
         return tab
 
@@ -939,21 +1073,25 @@ class MainWindow(QMainWindow):
         self.add_repeater_tab(flow)
         self.tabs.setCurrentIndex(2)    # Repeater = índice 2
 
+    def _go_tools(self, sub_idx: int) -> None:
+        """Navega a Tools y activa el sub-tab indicado."""
+        self.tabs.setCurrentIndex(3)
+        self.fuzzer_tab._tabs.setCurrentIndex(sub_idx)
+
     def send_to_fuzzer(self, flow: Flow):
         self.fuzzer_tab.load_from_flow(
-            host=flow.host, port=flow.port,
-            use_tls=(flow.scheme == "https"),
             raw=flow.raw_request,
+            use_tls=(flow.scheme == "https"),
         )
-        self.tabs.setCurrentIndex(3)    # Fuzzer = índice 3
+        self.tabs.setCurrentIndex(3)    # Tools; load_from_flow ya activa el tab nuevo
 
     def send_to_match_replace(self, flow: Flow):
-        self.tabs.setCurrentIndex(5)    # Matcher = índice 5
+        self._go_tools(self._idx_matcher)
         self.mr_tab.open_new_rule_dialog()
 
     def send_to_decoder(self, flow: Flow):
         self.decoder_tab.load_text(decode(flow.raw_request))
-        self.tabs.setCurrentIndex(6)    # Decoder = índice 6
+        self._go_tools(self._idx_decoder)
 
     def _send_flow_to_tool(self, flow: Flow, tool: str):
         if tool == "jwt":
@@ -965,7 +1103,7 @@ class MainWindow(QMainWindow):
                     break
             if jwt_token:
                 self.decoder_tab.load_jwt(jwt_token)
-                self.tabs.setCurrentIndex(6)
+                self._go_tools(self._idx_decoder)
                 return
         self.send_to_fuzzer(flow)
 
@@ -976,14 +1114,29 @@ class MainWindow(QMainWindow):
         os.path.expanduser("~"), ".leech", "ca_keychain_installed")
 
     def _find_browser(self) -> str | None:
-        candidates = [
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            shutil.which("chromium"),
-            shutil.which("chromium-browser"),
-            shutil.which("google-chrome"),
-            shutil.which("google-chrome-stable"),
-        ]
+        if sys.platform == "win32":
+            candidates = [
+                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Chromium\Application\chrome.exe"),
+                shutil.which("chrome"),
+                shutil.which("chromium"),
+            ]
+        elif sys.platform == "darwin":
+            candidates = [
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                shutil.which("chromium"),
+                shutil.which("google-chrome"),
+            ]
+        else:
+            candidates = [
+                shutil.which("chromium"),
+                shutil.which("chromium-browser"),
+                shutil.which("google-chrome"),
+                shutil.which("google-chrome-stable"),
+            ]
         return next((p for p in candidates if p and os.path.isfile(p)), None)
 
     def _ca_keychain_installed(self) -> bool:
@@ -993,18 +1146,39 @@ class MainWindow(QMainWindow):
         if not os.path.exists(CA_CERT_FILE):
             return False
         try:
-            result = subprocess.run([
-                "security", "add-trusted-cert",
-                "-d", "-r", "trustRoot",
-                "-k", os.path.expanduser("~/Library/Keychains/login.keychain-db"),
-                CA_CERT_FILE,
-            ], capture_output=True, timeout=60)
-            if result.returncode == 0:
+            if sys.platform == "darwin":
+                result = subprocess.run([
+                    "security", "add-trusted-cert",
+                    "-d", "-r", "trustRoot",
+                    "-k", os.path.expanduser("~/Library/Keychains/login.keychain-db"),
+                    CA_CERT_FILE,
+                ], capture_output=True, timeout=60)
+                ok = result.returncode == 0
+            elif sys.platform == "win32":
+                result = subprocess.run(
+                    ["certutil", "-addstore", "-user", "Root", CA_CERT_FILE],
+                    capture_output=True, timeout=60,
+                )
+                ok = result.returncode == 0
+            else:
+                # Linux: instalar en NSS db de Chromium/Chrome
+                nssdb = os.path.expanduser("~/.pki/nssdb")
+                certutil_bin = shutil.which("certutil")
+                if os.path.isdir(nssdb) and certutil_bin:
+                    r = subprocess.run([
+                        certutil_bin, "-d", f"sql:{nssdb}",
+                        "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                    ], capture_output=True, timeout=30)
+                    ok = r.returncode == 0
+                else:
+                    ok = False
+            if ok:
                 open(self._CA_INSTALLED_FLAG, "w").close()
-                return True
-            return False
+            return ok
         except Exception:
             return False
+
+    _BROWSER_PROFILE_DIR = os.path.join(os.path.expanduser("~"), ".leech", "browser_profile")
 
     def _ensure_ca_ready(self):
         from proxy.ca import ensure_ca
@@ -1012,6 +1186,66 @@ class MainWindow(QMainWindow):
             t = threading.Thread(target=ensure_ca, daemon=True)
             t.start()
             t.join(timeout=15)
+
+    def _ca_spki_hash(self) -> str | None:
+        """SHA-256 SPKI hash de la CA para --ignore-certificate-errors-spki-list."""
+        if not os.path.exists(CA_CERT_FILE):
+            return None
+        try:
+            import hashlib, base64
+            from cryptography import x509 as _x509
+            from cryptography.hazmat.primitives import serialization as _ser
+            with open(CA_CERT_FILE, "rb") as f:
+                cert = _x509.load_pem_x509_certificate(f.read())
+            pub_der = cert.public_key().public_bytes(
+                _ser.Encoding.DER, _ser.PublicFormat.SubjectPublicKeyInfo
+            )
+            return base64.b64encode(hashlib.sha256(pub_der).digest()).decode()
+        except Exception:
+            return None
+
+    def _setup_browser_profile(self, profile_dir: str) -> None:
+        """Siembra la CA en el perfil dedicado del navegador (silencioso, sin diálogos)."""
+        flag = os.path.join(profile_dir, ".ca_trusted")
+        if os.path.exists(flag):
+            return
+        if not os.path.exists(CA_CERT_FILE):
+            return
+        os.makedirs(profile_dir, exist_ok=True)
+        try:
+            if sys.platform == "linux":
+                certutil_bin = shutil.which("certutil")
+                if certutil_bin:
+                    # Inicializar NSS db dentro del perfil si aún no existe
+                    if not os.path.exists(os.path.join(profile_dir, "cert9.db")):
+                        subprocess.run(
+                            [certutil_bin, "-d", f"sql:{profile_dir}",
+                             "-N", "--empty-password"],
+                            capture_output=True, timeout=10,
+                        )
+                    r = subprocess.run([
+                        certutil_bin, "-d", f"sql:{profile_dir}",
+                        "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                    ], capture_output=True, timeout=10)
+                    if r.returncode == 0:
+                        open(flag, "w").close()
+                    # También sembrar en ~/.pki/nssdb para que Firefox y Chrome del sistema confíen
+                    nssdb = os.path.expanduser("~/.pki/nssdb")
+                    if os.path.isdir(nssdb):
+                        subprocess.run([
+                            certutil_bin, "-d", f"sql:{nssdb}",
+                            "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                        ], capture_output=True, timeout=10)
+            elif sys.platform == "darwin":
+                if not self._ca_keychain_installed():
+                    if self._install_ca_to_keychain():
+                        open(flag, "w").close()
+            elif sys.platform == "win32":
+                if not self._ca_keychain_installed():
+                    if self._install_ca_to_keychain():
+                        open(flag, "w").close()
+        except Exception:
+            pass
 
     def launch_browser(self):
         browser = self._find_browser()
@@ -1024,40 +1258,23 @@ class MainWindow(QMainWindow):
             return
 
         self._ensure_ca_ready()
+        profile_dir = self._BROWSER_PROFILE_DIR
+        self._setup_browser_profile(profile_dir)
 
-        if not self._ca_keychain_installed():
-            reply = QMessageBox.question(
-                self, "Instalar certificado CA",
-                "Para interceptar tráfico HTTPS, Leech necesita que confíes "
-                "en su autoridad certificadora.\n\n"
-                "macOS te pedirá tu contraseña de usuario (igual que Burp Suite). "
-                "¿Instalar ahora?",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply == QMessageBox.Yes:
-                ok = self._install_ca_to_keychain()
-                if not ok:
-                    QMessageBox.warning(
-                        self, "CA no instalada",
-                        "No se pudo instalar la CA automáticamente.\n"
-                        "Ve a Ajustes → Instalar CA para hacerlo manualmente\n"
-                        "o abre el navegador igualmente (verás avisos de certificado).",
-                    )
-
-        profile_dir = os.path.join(tempfile.gettempdir(), "leech_browser_profile")
         args = [
             browser,
             f"--proxy-server=http://{self._proxy_host}:{self._proxy_port}",
             f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--ignore-certificate-errors",
-            "--ignore-ssl-errors",
             "--disable-background-networking",
             "--disable-sync",
             "--disable-client-side-phishing-detection",
             "--disable-default-apps",
         ]
+        spki = self._ca_spki_hash()
+        if spki:
+            args.append(f"--ignore-certificate-errors-spki-list={spki}")
         try:
             subprocess.Popen(args)
         except Exception as exc:  # noqa: BLE001
@@ -1071,15 +1288,53 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            subprocess.Popen(["open", CA_CERT_FILE])
-            QMessageBox.information(
-                self, "Instalar CA",
-                f"Se ha abierto el certificado en Keychain Access.\n\n"
-                f"Haz doble clic en 'Leech CA' → 'Confiar' → "
-                f"'Al usar este certificado: Confiar siempre'.\n\n"
-                f"Ruta: {CA_CERT_FILE}",
-            )
-        except Exception as exc:  # noqa: BLE001
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", CA_CERT_FILE])
+                msg = (
+                    f"Se ha abierto el certificado en Keychain Access.\n\n"
+                    f"Haz doble clic en 'Leech CA' → 'Confiar' → "
+                    f"'Al usar este certificado: Confiar siempre'.\n\n"
+                    f"Ruta: {CA_CERT_FILE}"
+                )
+            elif sys.platform == "win32":
+                os.startfile(CA_CERT_FILE)
+                msg = (
+                    f"Se ha abierto el asistente de instalación de Windows.\n\n"
+                    f"Selecciona 'Instalar certificado' → 'Equipo local' → "
+                    f"'Entidades de certificación raíz de confianza'.\n\n"
+                    f"Ruta: {CA_CERT_FILE}"
+                )
+            else:
+                nssdb = os.path.expanduser("~/.pki/nssdb")
+                certutil_bin = shutil.which("certutil")
+                if os.path.isdir(nssdb) and certutil_bin:
+                    r = subprocess.run([
+                        certutil_bin, "-d", f"sql:{nssdb}",
+                        "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                    ], capture_output=True, timeout=30)
+                    if r.returncode == 0:
+                        open(self._CA_INSTALLED_FLAG, "w").close()
+                        msg = "CA instalada en Chromium/Chrome (NSS).\n\nReinicia el navegador para que surta efecto."
+                    else:
+                        msg = (
+                            f"No se pudo instalar automáticamente.\n\n"
+                            f"Ejecuta manualmente:\n"
+                            f"  certutil -d sql:{nssdb} -A -n 'Leech CA' -t 'CT,,' -i {CA_CERT_FILE}\n\n"
+                            f"Ruta del certificado: {CA_CERT_FILE}"
+                        )
+                else:
+                    msg = (
+                        f"Ruta del certificado:\n{CA_CERT_FILE}\n\n"
+                        f"Para Chrome/Chromium: instala 'libnss3-tools' y ejecuta:\n"
+                        f"  certutil -d sql:~/.pki/nssdb -A -n 'Leech CA' -t 'CT,,' -i {CA_CERT_FILE}\n\n"
+                        f"Para Firefox: Preferencias → Privacidad → Ver certificados → Importar."
+                    )
+                    try:
+                        subprocess.Popen(["xdg-open", os.path.dirname(CA_CERT_FILE)])
+                    except Exception:
+                        pass
+            QMessageBox.information(self, "Instalar CA", msg)
+        except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
 
     def closeEvent(self, event):
