@@ -64,8 +64,3 @@ ui/            interfaz (PySide6)
 session.py     guardado/restauración de sesión
 ```
 
----
-
-<p align="center">
-  Inspirado en <a href="https://portswigger.net/burp">Burp Suite</a> y <a href="https://caido.io">Caido</a>
-</p>
