@@ -32,6 +32,7 @@ from ui.ai_shell import AIShellTab
 from ui.decoder import DecoderTab
 from ui.sitemap import SiteMapTab
 from ui.comparer import ComparerTab
+from ui.apikey import APIKeyTab
 import session
 
 _ASSETS = Path(__file__).parent / "assets"
@@ -582,6 +583,10 @@ class MainWindow(QMainWindow):
 
         self.comparer_tab = ComparerTab()
         self.fuzzer_tab.register_tool("Comparer", self.comparer_tab, "Comparer")
+
+        self.apikey_tab = APIKeyTab()
+        self.apikey_tab.set_flows_getter(lambda: self.flows)
+        self.fuzzer_tab.register_tool("API Key", self.apikey_tab, "API Key")
 
         self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
 
