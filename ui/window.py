@@ -1125,6 +1125,14 @@ class MainWindow(QMainWindow):
         self.decoder_tab.load_text(decode(flow.raw_request))
         self._go_tools(self.decoder_tab)
 
+    def _send_to_comparer(self, flow: Flow, side: str):
+        text = decode(flow.raw_request)
+        if side == "a":
+            self.comparer_tab.load_a(text)
+        else:
+            self.comparer_tab.load_b(text)
+        self._go_tools(self.comparer_tab)
+
     def _send_flow_to_tool(self, flow: Flow, tool: str):
         if tool == "jwt":
             raw = flow.raw_request.decode("utf-8", "replace")
