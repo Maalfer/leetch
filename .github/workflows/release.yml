@@ -1,0 +1,332 @@
+name: Build & Release
+
+# Disparar con: git tag v1.2.3 && git push origin v1.2.3
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write   # crear releases y commits en gh-pages
+  pages: write
+  id-token: write
+
+# ══════════════════════════════════════════════════════════════
+# Windows — PyInstaller + Inno Setup
+# ══════════════════════════════════════════════════════════════
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias Python
+        run: pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib Pillow
+
+      - name: Convertir logo PNG → ICO
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('ui/assets/logo.png').convert('RGBA')
+          img.save('ui/assets/logo.ico', format='ICO',
+                   sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
+          print('Logo convertido a ICO')
+          "
+
+      - name: Build con PyInstaller
+        run: pyinstaller leetch.spec --noconfirm
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Crear installer con Inno Setup
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          mkdir -p Output
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$version" `
+            "installer\windows\leetch.iss"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: Output/LeetchSetup-*.exe
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════
+# Linux — PyInstaller + .deb + APT repo
+# ══════════════════════════════════════════════════════════════
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias del sistema
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libxcb-xinerama0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xfixes0 libfontconfig1 libdbus-1-3 \
+            libxkbcommon0 libxkbcommon-x11-0 \
+            dpkg-dev apt-utils
+
+      - name: Instalar dependencias Python
+        run: pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
+
+      - name: Build con PyInstaller
+        run: pyinstaller leetch.spec --noconfirm
+
+      - name: Build .deb
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          chmod +x installer/linux/build_deb.sh
+          bash installer/linux/build_deb.sh "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: dist/leetch_*.deb
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════
+# macOS — PyInstaller + .dmg
+# ══════════════════════════════════════════════════════════════
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias Python
+        run: pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
+
+      - name: Convertir logo PNG → ICNS
+        run: |
+          mkdir -p icon.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size ui/assets/logo.png --out icon.iconset/icon_${size}x${size}.png 2>/dev/null || true
+            sips -z $((size*2)) $((size*2)) ui/assets/logo.png --out icon.iconset/icon_${size}x${size}@2x.png 2>/dev/null || true
+          done
+          iconutil -c icns icon.iconset -o ui/assets/logo.icns 2>/dev/null || true
+
+      - name: Build con PyInstaller
+        env:
+          LEETCH_VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          export LEETCH_VERSION="${VERSION#v}"
+          pyinstaller leetch.spec --noconfirm
+
+      - name: Crear .dmg
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          brew install create-dmg
+          create-dmg \
+            --volname "Leetch $VERSION" \
+            --volicon "ui/assets/logo.icns" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 128 \
+            --icon "Leetch.app" 200 190 \
+            --hide-extension "Leetch.app" \
+            --app-drop-link 600 185 \
+            "Leetch-${VERSION}.dmg" \
+            "dist/Leetch.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: Leetch-*.dmg
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════
+# Publicar GitHub Release con los tres artefactos
+# ══════════════════════════════════════════════════════════════
+  publish-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Listar artefactos
+        run: find artifacts -type f | sort
+
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/windows-installer/*.exe
+            artifacts/linux-deb/*.deb
+            artifacts/macos-dmg/*.dmg
+
+# ══════════════════════════════════════════════════════════════
+# Actualizar repositorio APT en gh-pages
+# ══════════════════════════════════════════════════════════════
+  update-apt-repo:
+    needs: build-linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Descargar .deb
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-deb
+          path: new-deb
+
+      - name: Configurar git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Preparar rama gh-pages
+        run: |
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+            touch .nojekyll
+            git add .nojekyll
+            git commit -m "Inicializar gh-pages"
+            git push origin gh-pages
+          fi
+
+      - name: Actualizar pool APT
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          DEB=$(ls new-deb/*.deb | head -1)
+
+          mkdir -p pool/main/l/leetch
+          mkdir -p dists/stable/main/binary-amd64
+
+          cp "$DEB" pool/main/l/leetch/
+
+          # Packages
+          dpkg-scanpackages --arch amd64 pool/ > dists/stable/main/binary-amd64/Packages
+          gzip -k -f dists/stable/main/binary-amd64/Packages
+
+          # Release
+          PKG_SIZE=$(wc -c < dists/stable/main/binary-amd64/Packages)
+          GZ_SIZE=$(wc -c  < dists/stable/main/binary-amd64/Packages.gz)
+          PKG_MD5=$(md5sum    dists/stable/main/binary-amd64/Packages    | cut -d' ' -f1)
+          PKG_SHA1=$(sha1sum  dists/stable/main/binary-amd64/Packages    | cut -d' ' -f1)
+          PKG_SHA256=$(sha256sum dists/stable/main/binary-amd64/Packages | cut -d' ' -f1)
+          GZ_MD5=$(md5sum     dists/stable/main/binary-amd64/Packages.gz | cut -d' ' -f1)
+          GZ_SHA1=$(sha1sum   dists/stable/main/binary-amd64/Packages.gz | cut -d' ' -f1)
+          GZ_SHA256=$(sha256sum dists/stable/main/binary-amd64/Packages.gz | cut -d' ' -f1)
+
+          cat > dists/stable/Release << EOF
+          Origin: Leetch
+          Label: Leetch
+          Suite: stable
+          Codename: stable
+          Version: ${VERSION}
+          Architectures: amd64
+          Components: main
+          Description: Repositorio APT de Leetch
+          Date: $(date -Ru)
+          MD5Sum:
+           ${PKG_MD5} ${PKG_SIZE} main/binary-amd64/Packages
+           ${GZ_MD5} ${GZ_SIZE} main/binary-amd64/Packages.gz
+          SHA1:
+           ${PKG_SHA1} ${PKG_SIZE} main/binary-amd64/Packages
+           ${GZ_SHA1} ${GZ_SIZE} main/binary-amd64/Packages.gz
+          SHA256:
+           ${PKG_SHA256} ${PKG_SIZE} main/binary-amd64/Packages
+           ${GZ_SHA256} ${GZ_SIZE} main/binary-amd64/Packages.gz
+          EOF
+
+          # Firmar con GPG si el secreto está configurado
+          if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+            echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+            gpg --batch --yes --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
+              --clearsign -o dists/stable/InRelease dists/stable/Release
+            gpg --batch --yes --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
+              -abs -o dists/stable/Release.gpg dists/stable/Release
+          fi
+
+      - name: Generar index.html
+        run: |
+          REPO="${{ github.repository }}"
+          OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          cat > index.html << HTMLEOF
+          <!DOCTYPE html>
+          <html lang="es">
+          <head>
+            <meta charset="UTF-8">
+            <title>Leetch — APT Repository</title>
+            <style>
+              body { font-family: monospace; background: #1b1d22; color: #dfe3ea;
+                     max-width: 860px; margin: 40px auto; padding: 0 20px; }
+              h1   { color: #ff8c1a; }
+              h2   { color: #9aa1ad; font-size: 1em; margin-top: 2em; }
+              pre  { background: #23262d; padding: 16px; border-radius: 6px;
+                     overflow-x: auto; }
+              a    { color: #4fc3d6; }
+            </style>
+          </head>
+          <body>
+          <h1>Leetch</h1>
+          <p>Proxy MITM HTTP/HTTPS para pentesting web. Inspirado en Burp Suite.</p>
+
+          <h2>Instalar en Debian / Ubuntu</h2>
+          <pre>
+          # Añadir el repositorio (sin firma GPG)
+          echo "deb [trusted=yes] https://${OWNER}.github.io/${REPO_NAME} stable main" \
+            | sudo tee /etc/apt/sources.list.d/leetch.list
+
+          sudo apt update
+          sudo apt install leetch
+          </pre>
+
+          <h2>Con firma GPG (si está configurada)</h2>
+          <pre>
+          curl -fsSL https://${OWNER}.github.io/${REPO_NAME}/leetch.gpg \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/leetch.gpg
+
+          echo "deb https://${OWNER}.github.io/${REPO_NAME} stable main" \
+            | sudo tee /etc/apt/sources.list.d/leetch.list
+
+          sudo apt update
+          sudo apt install leetch
+          </pre>
+
+          <h2>Descargas directas</h2>
+          <p>
+            <a href="https://github.com/${REPO}/releases/latest">
+              Releases en GitHub →
+            </a>
+          </p>
+          </body>
+          </html>
+          HTMLEOF
+
+      - name: Commit y push a gh-pages
+        run: |
+          git add -A
+          git diff --cached --quiet && echo "Sin cambios" && exit 0
+          git commit -m "APT repo: ${{ github.ref_name }}"
+          git push origin gh-pages

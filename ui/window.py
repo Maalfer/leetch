@@ -31,6 +31,7 @@ from ui.matchreplace import MatchReplaceTab
 from ui.ai_shell import AIShellTab
 from ui.decoder import DecoderTab
 from ui.sitemap import SiteMapTab
+from ui.comparer import ComparerTab
 import session
 
 _ASSETS = Path(__file__).parent / "assets"
@@ -262,7 +263,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Leetch")
         self.setWindowIcon(QIcon(_LOGO))
-        self.resize(1200, 800)
+        self.resize(1500, 950)
 
         self.flows: list[Flow] = []
         self._flow_by_id: dict[int, Flow] = {}
@@ -557,6 +558,9 @@ class MainWindow(QMainWindow):
 
         self.mr_tab = MatchReplaceTab()
         self.fuzzer_tab.register_tool("Matcher", self.mr_tab, "Matcher")
+
+        self.comparer_tab = ComparerTab()
+        self.fuzzer_tab.register_tool("Comparer", self.comparer_tab, "Comparer")
 
         self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
 
@@ -883,6 +887,15 @@ class MainWindow(QMainWindow):
         send_dec.setToolTip("Abre la petición en el Decoder para transformar y decodificar valores")
         send_dec.triggered.connect(lambda: self.send_to_decoder(flow))
         menu.addAction(send_dec)
+
+        cmp_menu = QMenu("Enviar al Comparer ▶", self)
+        cmp_a = QAction("Como Texto A", cmp_menu)
+        cmp_a.triggered.connect(lambda checked=False, f=flow: self._send_to_comparer(f, "a"))
+        cmp_menu.addAction(cmp_a)
+        cmp_b = QAction("Como Texto B", cmp_menu)
+        cmp_b.triggered.connect(lambda checked=False, f=flow: self._send_to_comparer(f, "b"))
+        cmp_menu.addAction(cmp_b)
+        menu.addMenu(cmp_menu)
 
         jwt_action = QAction("JWT Inspector", self)
         jwt_action.setToolTip("Extrae el JWT del header Authorization y lo analiza en el inspector")
@@ -1363,7 +1376,15 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # Delegar diálogos de archivo al entorno de escritorio nativo (COSMIC, GNOME, KDE…)
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
     app = QApplication(sys.argv)
+    app.setApplicationName("Leetch")
+    app.setApplicationDisplayName("Leetch")
+    # Necesario para que GNOME/Cosmic emparejen la ventana con leetch.desktop
+    app.setDesktopFileName("leetch")
+    app.setWindowIcon(QIcon(str(_ASSETS / "logo.png")))
     app.setStyleSheet(STYLE)
     window = MainWindow()
     window.show()

@@ -7,42 +7,67 @@
 
 ---
 
-## Requisitos
-
-```
-Python 3.10+
-PySide6
-cryptography
-pyte
-```
-
-Opcionales (descompresión de respuestas):
-
-```
-brotli
-zstandard
-```
-
 ## Instalación
 
+### Linux — repositorio APT (recomendado)
+
 ```bash
-pip install PySide6 cryptography pyte
-# opcionales
-pip install brotli zstandard
+echo "deb [trusted=yes] https://maalfer.github.io/leether stable main" \
+  | sudo tee /etc/apt/sources.list.d/leetch.list
+sudo apt update
+sudo apt install leetch
 ```
 
-## Arrancar
+### Linux — paquete .deb
+
+Descarga el `.deb` de la [última release](https://github.com/maalfer/leether/releases/latest):
 
 ```bash
+sudo apt install ./leetch_*.deb
+```
+
+### Windows
+
+Descarga e instala `LeetchSetup-*.exe` desde la [última release](https://github.com/maalfer/leether/releases/latest).
+
+### macOS
+
+Descarga `Leetch-*.dmg` desde la [última release](https://github.com/maalfer/leether/releases/latest), ábrelo y arrastra la app a Aplicaciones.
+
+---
+
+## Desde el código fuente (todas las plataformas)
+
+Requiere **Python 3.10+**.
+
+```bash
+git clone https://github.com/maalfer/leether.git
+cd leether
+
+# Crear entorno virtual
+python3 -m venv .venv
+source .venv/bin/activate      # Linux / macOS
+# .venv\Scripts\activate       # Windows
+
+# Instalar dependencias
+pip install -r requirements.txt
+
+# Arrancar
 python3 main.py
 ```
+
+> **Linux — icono en el dock:** ejecuta `bash install-local.sh` una vez tras clonar el repositorio para registrar la app en el escritorio.
+
+---
+
+## Uso
 
 El proxy escucha en `127.0.0.1:8080` por defecto. Configúralo en tu navegador
 o usa el navegador integrado (**Ajustes → Abrir navegador**).
 
 ### Certificado CA
 
-Al arrancar por primera vez Leetch genera una CA propia en `~/.leeth/`.
+Al arrancar por primera vez Leetch genera una CA propia en `~/.leetch/`.
 Para interceptar HTTPS sin avisos: **Ajustes → Instalar CA** (lo hace automáticamente
 en el sistema y en el perfil del navegador integrado).
 

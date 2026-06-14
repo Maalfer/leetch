@@ -6,5 +6,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+Output/
+deb_build/
+icon.iconset/
+ui/assets/logo.ico
+ui/assets/logo.icns
 .env
 *.log
