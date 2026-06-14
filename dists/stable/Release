@@ -1,0 +1,18 @@
+Origin: Leetch
+Label: Leetch
+Suite: stable
+Codename: stable
+Version: 1.0.0
+Architectures: amd64
+Components: main
+Description: Repositorio APT de Leetch
+Date: Sun, 14 Jun 2026 10:35:52 +0000
+MD5Sum:
+ 1e11d9463009f20f92261f802e1a63d5 882 main/binary-amd64/Packages
+ c1b7e150dfc3d1e8b031b9288509abd5 607 main/binary-amd64/Packages.gz
+SHA1:
+ 01d083d4db08c9a11a885b50e6e0d060ab6cc041 882 main/binary-amd64/Packages
+ 0a592978a5770969e9136bd2b546bb98d36f6d78 607 main/binary-amd64/Packages.gz
+SHA256:
+ 6fc2f5bae7a8d94907602bf8ec1802c28a7558a19a9d1bd80474ee678b2cc237 882 main/binary-amd64/Packages
+ a3a1f638b918c07355ea58669dd5844d3462a1ea97baa3bcfb22bf681cb31b17 607 main/binary-amd64/Packages.gz

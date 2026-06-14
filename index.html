@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Leetch — APT Repository</title>
+  <style>
+    body { font-family: monospace; background: #1b1d22; color: #dfe3ea;
+           max-width: 860px; margin: 40px auto; padding: 0 20px; }
+    h1   { color: #ff8c1a; }
+    h2   { color: #9aa1ad; font-size: 1em; margin-top: 2em; }
+    pre  { background: #23262d; padding: 16px; border-radius: 6px;
+           overflow-x: auto; }
+    a    { color: #4fc3d6; }
+  </style>
+</head>
+<body>
+<h1>Leetch</h1>
+<p>Proxy MITM HTTP/HTTPS para pentesting web. Inspirado en Burp Suite.</p>
+
+<h2>Instalar en Debian / Ubuntu</h2>
+<pre>
+# Añadir el repositorio (sin firma GPG)
+echo "deb [trusted=yes] https://Maalfer.github.io/leetch stable main"   | sudo tee /etc/apt/sources.list.d/leetch.list
+
+sudo apt update
+sudo apt install leetch
+</pre>
+
+<h2>Con firma GPG (si está configurada)</h2>
+<pre>
+curl -fsSL https://Maalfer.github.io/leetch/leetch.gpg   | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/leetch.gpg
+
+echo "deb https://Maalfer.github.io/leetch stable main"   | sudo tee /etc/apt/sources.list.d/leetch.list
+
+sudo apt update
+sudo apt install leetch
+</pre>
+
+<h2>Descargas directas</h2>
+<p>
+  <a href="https://github.com/Maalfer/leetch/releases/latest">
+    Releases en GitHub →
+  </a>
+</p>
+</body>
+</html>
