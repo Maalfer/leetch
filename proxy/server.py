@@ -505,12 +505,19 @@ class ProxyServer:
         }
         h1_parts = [f"{method} {path} HTTP/1.1\r\n".encode(),
                     f"Host: {authority or host}\r\n".encode()]
+        has_ae = False
         for name, value in hdrs:
             n = (name if isinstance(name, str) else name.decode("utf-8", "replace")).lower()
             v = value if isinstance(value, str) else value.decode("utf-8", "replace")
             if n in _skip_req:
                 continue
+            if n == "accept-encoding":
+                h1_parts.append(b"Accept-Encoding: " + _ACCEPT_ENCODING + b"\r\n")
+                has_ae = True
+                continue
             h1_parts.append(f"{n}: {v}\r\n".encode())
+        if not has_ae:
+            h1_parts.append(b"Accept-Encoding: " + _ACCEPT_ENCODING + b"\r\n")
         if body:
             h1_parts.append(f"content-length: {len(body)}\r\n".encode())
         h1_parts.append(b"\r\n")
@@ -633,13 +640,18 @@ class ProxyServer:
         rebuilt = new_first + sep + rest
         lines = rebuilt.split(b"\r\n")
         out = []
+        seen_ae = False
         for line in lines:
             ll = line.lower()
             if ll.startswith(b"proxy-connection:"):
                 continue
             if ll.startswith(b"accept-encoding:"):
-                # Solo anunciar encodings que podemos decodificar para el History
                 out.append(b"Accept-Encoding: " + _ACCEPT_ENCODING)
+                seen_ae = True
                 continue
+            # Si llegamos al separador de cabeceras sin haberlo visto, lo añadimos
+            if not seen_ae and line == b"":
+                out.append(b"Accept-Encoding: " + _ACCEPT_ENCODING)
+                seen_ae = True
             out.append(line)
         return b"\r\n".join(out)

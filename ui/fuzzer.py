@@ -1,4 +1,4 @@
-"""Módulo Fuzzer: contenedor con herramientas Fuzzing, Race Conditions y JWT."""
+"""Módulo Fuzzer: contenedor con herramientas Fuzzing, Race Conditions, JWT y OTP."""
 from __future__ import annotations
 
 import base64
@@ -24,6 +24,7 @@ from net.http_client import send_raw_request
 from net import http_message as hm
 from ui.style import MONO, TEXT_DIM, decode, decode_http
 from ui.highlighter import HTTPHighlighter, JSONHighlighter
+from ui.otp import OTPTab
 
 MARKER = "§"
 
@@ -1031,14 +1032,11 @@ class FuzzerTab(QWidget):
         tbl.setContentsMargins(12, 8, 12, 8)
         tbl.setSpacing(10)
 
-        lbl = QLabel("Nueva sesión:")
-        lbl.setObjectName("paneCaption")
-        tbl.addWidget(lbl)
-
         for text, slot in [
             ("Fuzzing",         lambda: self.add_fuzzing_tab()),
             ("Race Conditions", lambda: self.add_race_tab()),
             ("JWT Auditor",     lambda: self.add_jwt_tab()),
+            ("OTP",             lambda: self.add_otp_tab()),
         ]:
             btn = QPushButton(text)
             btn.setCursor(Qt.PointingHandCursor)
@@ -1084,6 +1082,12 @@ class FuzzerTab(QWidget):
         if raw:
             tab.load_from_flow(raw, use_tls)
         idx = self._add_tab(tab, f"JWT {self._tabs.count() + 1}")
+        self._tabs.setCurrentIndex(idx)
+        return tab
+
+    def add_otp_tab(self, raw: bytes = b"", use_tls: bool = False) -> OTPTab:
+        tab = OTPTab(use_tls=use_tls, raw=raw)
+        idx = self._add_tab(tab, f"OTP {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 

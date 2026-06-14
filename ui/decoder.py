@@ -17,7 +17,7 @@ from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTabWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
     QVBoxLayout, QWidget,
 )
 
@@ -443,28 +443,16 @@ class _JWTTab(QWidget):
 
 # ── Pestaña principal ─────────────────────────────────────────────────────────
 class DecoderTab(QWidget):
-    """Decoder + JWT Inspector para Leetch."""
+    """Decoder de transformaciones encadenables para Leetch."""
 
     def __init__(self):
         super().__init__()
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
-        self._inner = QTabWidget()
-        root.addWidget(self._inner)
-
         self._transform = _TransformTab()
-        self._inner.addTab(self._transform, "Transformar")
-
-        self._jwt = _JWTTab()
-        self._inner.addTab(self._jwt, "JWT Inspector")
+        root.addWidget(self._transform)
 
     def load_text(self, text: str) -> None:
         """Carga texto en la pestaña de transformación."""
         self._transform.load_text(text)
-        self._inner.setCurrentIndex(0)
-
-    def load_jwt(self, token: str) -> None:
-        """Carga y analiza un JWT directamente."""
-        self._jwt.load_text(token)
-        self._inner.setCurrentIndex(1)

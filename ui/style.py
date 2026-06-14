@@ -367,6 +367,7 @@ QTableWidget {{
 QTableWidget::item {{
     padding: 2px 8px;
     border: none;
+    background-color: transparent;
 }}
 QTableWidget::item:selected {{
     background-color: {selection};

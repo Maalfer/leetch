@@ -5,8 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
-
 import threading
+from datetime import datetime
 
 from pathlib import Path
 
@@ -51,9 +51,30 @@ _LABEL_BG: dict[str, str] = {
 }
 
 
+class _SortItem(QTableWidgetItem):
+    """QTableWidgetItem con sort_key numérico para ordenar correctamente."""
+    def __init__(self, text: str, sort_key=None):
+        super().__init__(text)
+        self._sort_key = sort_key if sort_key is not None else text
+
+    def __lt__(self, other):
+        if isinstance(other, _SortItem):
+            try:
+                return self._sort_key < other._sort_key
+            except TypeError:
+                pass
+        return super().__lt__(other)
+
+
 class _BgDelegate(QStyledItemDelegate):
-    """Delegado que garantiza que el BackgroundRole de los items se pinta
-    correctamente aunque haya un stylesheet global activo."""
+    """Delegado que pinta el BackgroundRole antes que el QSS global lo pise."""
+
+    def paint(self, painter, option, index):
+        bg = index.data(Qt.BackgroundRole)
+        if bg is not None:
+            color = bg.color() if isinstance(bg, QBrush) else QColor(bg)
+            painter.fillRect(option.rect, color)
+        super().paint(painter, option, index)
 
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
@@ -688,9 +709,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["#", "Método", "Host", "URL", "Estado", "Long.", "Comentario"])
+            ["#", "Hora", "Método", "Host", "URL", "Estado", "Long.", "Comentario"])
         self.table.setAccessibleName("Historial HTTP")
         self.table.setToolTip(
             "Peticiones interceptadas; clic derecho para más opciones")
@@ -702,19 +723,25 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(28)
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(4, QHeaderView.Stretch)
         hdr.setHighlightSections(False)
+        hdr.setSectionsClickable(True)
+        hdr.setSortIndicatorShown(False)
         self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(1, 80)
-        self.table.setColumnWidth(2, 200)
-        self.table.setColumnWidth(4, 80)
-        self.table.setColumnWidth(5, 90)
-        self.table.setColumnWidth(6, 160)
+        self.table.setColumnWidth(1, 72)
+        self.table.setColumnWidth(2, 80)
+        self.table.setColumnWidth(3, 200)
+        self.table.setColumnWidth(5, 80)
+        self.table.setColumnWidth(6, 90)
+        self.table.setColumnWidth(7, 160)
         self.table.itemSelectionChanged.connect(self.on_row_selected)
         self.table.itemDoubleClicked.connect(lambda _: self._send_selected_to_repeater())
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_history_menu)
         self.table.setItemDelegate(_BgDelegate(self.table))
+        self._sort_col = -1
+        self._sort_order = Qt.AscendingOrder
+        hdr.sectionClicked.connect(self._on_history_header_clicked)
 
         action_row = QHBoxLayout()
         action_row.setSpacing(6)
@@ -818,16 +845,20 @@ class MainWindow(QMainWindow):
         self._flow_by_id[flow.id] = flow
         row = self.table.rowCount()
         self.table.insertRow(row)
-        values = [str(flow.id), flow.method, flow.host, flow.url,
-                  flow.status, str(flow.length), flow.comment]
-        for col, val in enumerate(values):
-            item = QTableWidgetItem(val)
+        hora_str = datetime.fromtimestamp(flow.timestamp).strftime("%H:%M:%S")
+        texts = [str(flow.id), hora_str, flow.method, flow.host, flow.url,
+                 flow.status, str(flow.length), flow.comment]
+        sort_keys = [flow.id, flow.timestamp, None, None, None, None, flow.length, None]
+        for col, (val, sk) in enumerate(zip(texts, sort_keys)):
+            item = _SortItem(val, sk)
             item.setData(Qt.UserRole, flow.id)
             if col == 0:
                 item.setForeground(QColor(TEXT_DIM))
             elif col == 1:
+                item.setForeground(QColor(TEXT_DIM))
+            elif col == 2:
                 item.setForeground(QColor("#7fb3ff"))
-            elif col == 4:
+            elif col == 5:
                 color = status_color(flow.status)
                 if color is not None:
                     item.setForeground(color)
@@ -1000,6 +1031,19 @@ class MainWindow(QMainWindow):
             visible = self._flow_matches_scope(flow) and self._flow_matches_search(flow)
             self.table.setRowHidden(row, not visible)
 
+    def _on_history_header_clicked(self, col: int):
+        if self._sort_col == col:
+            self._sort_order = (
+                Qt.DescendingOrder if self._sort_order == Qt.AscendingOrder
+                else Qt.AscendingOrder)
+        else:
+            self._sort_col = col
+            self._sort_order = Qt.AscendingOrder
+        self.table.sortItems(col, self._sort_order)
+        hdr = self.table.horizontalHeader()
+        hdr.setSortIndicator(col, self._sort_order)
+        hdr.setSortIndicatorShown(True)
+
     # ------------------------------------------------------------------ #
     # Etiquetas y comentarios
     # ------------------------------------------------------------------ #
@@ -1037,7 +1081,7 @@ class MainWindow(QMainWindow):
         flow.comment = text.strip()
         row = self._row_for_flow_id(flow.id)
         if row >= 0:
-            item = self.table.item(row, 6)
+            item = self.table.item(row, 7)
             if item:
                 item.setText(flow.comment)
 
@@ -1135,16 +1179,10 @@ class MainWindow(QMainWindow):
 
     def _send_flow_to_tool(self, flow: Flow, tool: str):
         if tool == "jwt":
-            raw = flow.raw_request.decode("utf-8", "replace")
-            jwt_token = ""
-            for line in raw.split("\r\n"):
-                if line.lower().startswith("authorization: bearer "):
-                    jwt_token = line.split(" ", 2)[-1].strip()
-                    break
-            if jwt_token:
-                self.decoder_tab.load_jwt(jwt_token)
-                self._go_tools(self.decoder_tab)
-                return
+            jwt_tab = self.fuzzer_tab.add_jwt_tab(
+                raw=flow.raw_request, use_tls=(flow.scheme == "https"))
+            self.tabs.setCurrentIndex(3)
+            return
         self.send_to_fuzzer(flow)
 
     # ------------------------------------------------------------------ #
