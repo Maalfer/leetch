@@ -1,4 +1,4 @@
-"""Ventana principal de Leech."""
+"""Ventana principal de Leetch."""
 from __future__ import annotations
 
 import os
@@ -8,8 +8,10 @@ import sys
 
 import threading
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, QObject, Signal, Slot
-from PySide6.QtGui import QAction, QBrush, QColor
+from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QLabel, QTabWidget, QTabBar, QTableWidget, QTableWidgetItem, QSplitter,
@@ -30,6 +32,9 @@ from ui.ai_shell import AIShellTab
 from ui.decoder import DecoderTab
 from ui.sitemap import SiteMapTab
 import session
+
+_ASSETS = Path(__file__).parent / "assets"
+_LOGO   = str(_ASSETS / "logo.png")
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -255,7 +260,8 @@ class _IntProxy:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Leech")
+        self.setWindowTitle("Leetch")
+        self.setWindowIcon(QIcon(_LOGO))
         self.resize(1200, 800)
 
         self.flows: list[Flow] = []
@@ -352,7 +358,7 @@ class MainWindow(QMainWindow):
 
         help_menu = menubar.addMenu("A&yuda")
 
-        howto_action = QAction("Cómo usar Leech", self)
+        howto_action = QAction("Cómo usar Leetch", self)
         howto_action.triggered.connect(self.show_help)
         help_menu.addAction(howto_action)
 
@@ -368,7 +374,7 @@ class MainWindow(QMainWindow):
     def save_session(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Guardar sesión", "sesion_leech.json",
-            "Sesión Leech (*.json);;Todos los archivos (*)",
+            "Sesión Leetch (*.json);;Todos los archivos (*)",
         )
         if not path:
             return
@@ -386,7 +392,7 @@ class MainWindow(QMainWindow):
     def load_session(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Cargar sesión", "",
-            "Sesión Leech (*.json);;Todos los archivos (*)",
+            "Sesión Leetch (*.json);;Todos los archivos (*)",
         )
         if not path:
             return
@@ -459,16 +465,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def show_help(self):
         text = (
-            "<h3>Cómo usar Leech</h3>"
+            "<h3>Cómo usar Leetch</h3>"
             "<p><b>1. Intercept.</b> Activa el toggle rojo para capturar peticiones "
             "en vuelo, edítalas y pulsa Forward o Drop.</p>"
-            "<p><b>2. Proxy automático.</b> Leech intercepta tráfico en "
+            "<p><b>2. Proxy automático.</b> Leetch intercepta tráfico en "
             f"<code>{_DEFAULT_HOST}:{_DEFAULT_PORT}</code> nada más abrir. "
             "Cambia la dirección en <i>Ajustes → Configuración del proxy</i>.</p>"
             "<p><b>3. Enviar tráfico.</b> Configura tu navegador para usar ese proxy, "
             "o pulsa <i>Abrir navegador</i> para lanzar Chrome ya preconfigurado.</p>"
             "<p><b>4. HTTPS / CA.</b> Instala la CA desde "
-            "<i>Ajustes → Instalar CA</i> y confía en <i>Leech CA</i>.</p>"
+            "<i>Ajustes → Instalar CA</i> y confía en <i>Leetch CA</i>.</p>"
             "<p><b>5. HTTP History.</b> Cada petición aparece en la tabla. "
             "Clic derecho para: Repeater, Tools, Matcher, Decoder, JWT Inspector, "
             "copiar curl, etiquetar con color, añadir comentario.</p>"
@@ -484,7 +490,7 @@ class MainWindow(QMainWindow):
             "<p><b>11. Sesiones.</b> Ctrl+S para guardar, Ctrl+O para cargar.</p>"
         )
         box = QMessageBox(self)
-        box.setWindowTitle("Cómo usar Leech")
+        box.setWindowTitle("Cómo usar Leetch")
         box.setTextFormat(Qt.RichText)
         box.setText(text)
         box.exec()
@@ -497,19 +503,22 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("Ubicación de la CA")
         box.setTextFormat(Qt.RichText)
         box.setText(
-            "<p>El certificado CA de Leech se encuentra en:</p>"
+            "<p>El certificado CA de Leetch se encuentra en:</p>"
             f"<p><code>{CA_CERT_FILE}</code></p>"
             f"<p>{estado}</p>"
         )
         box.exec()
 
     def show_about(self):
-        QMessageBox.about(
-            self, "Acerca de Leech",
-            "<h3>Leech</h3>"
-            "<p>Mini proxy de interceptación HTTP/HTTPS con Intercept, History, "
-            "Repeater, Tools, Matcher, Decoder y Site Map.</p>"
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Acerca de Leetch")
+        dlg.setIconPixmap(QPixmap(_LOGO).scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        dlg.setText(
+            "<h3>Leetch</h3>"
+            "<p>Proxy de interceptación HTTP/HTTPS para pentesting web.<br>"
+            "Intercept · History · Repeater · Tools · Site Map</p>"
         )
+        dlg.exec()
 
     # ------------------------------------------------------------------ #
     # UI principal
@@ -527,8 +536,8 @@ class MainWindow(QMainWindow):
         #   0 → Intercept
         #   1 → HTTP History
         #   2 → Repeater
-        #   3 → Tools  (FuzzerTab; sus sub-tabs internos incluyen
-        #               Decoder, IA y Matcher como tabs fijos no cerrables)
+        #   3 → Tools  (FuzzerTab; Decoder, IA y Matcher son botones de la fila
+        #               "Nueva sesión", junto a Fuzzing/Race/JWT Auditor)
         #   4 → Site Map
         self.intercept_tab = InterceptTab()
         self.tabs.addTab(self.intercept_tab, "Intercept")
@@ -538,16 +547,16 @@ class MainWindow(QMainWindow):
 
         self.fuzzer_tab = FuzzerTab()
 
-        # Tabs fijos no cerrables dentro de FuzzerTab (mismo nivel que Fuzzing/Race/JWT)
+        # Herramientas singleton: botones en la fila "Nueva sesión" de FuzzerTab
         self.decoder_tab = DecoderTab()
-        self._idx_decoder = self.fuzzer_tab.add_tool_tab(self.decoder_tab, "Decoder")
+        self.fuzzer_tab.register_tool("🧬  Decoder", self.decoder_tab, "Decoder")
 
         self.ai_tab = AIShellTab()
         self.ai_tab.set_flows_getter(lambda: self.flows)
-        self._idx_ia = self.fuzzer_tab.add_tool_tab(self.ai_tab, "IA")
+        self.fuzzer_tab.register_tool("🤖  IA", self.ai_tab, "IA")
 
         self.mr_tab = MatchReplaceTab()
-        self._idx_matcher = self.fuzzer_tab.add_tool_tab(self.mr_tab, "Matcher")
+        self.fuzzer_tab.register_tool("🔁  Matcher", self.mr_tab, "Matcher")
 
         self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
 
@@ -555,6 +564,22 @@ class MainWindow(QMainWindow):
         self.sitemap_tab.set_flows_getter(lambda: self.flows)
         self.sitemap_tab.send_to_repeater.connect(self.send_to_repeater)
         self.tabs.addTab(self.sitemap_tab, "Site Map")
+
+        # Botón de Scope en la esquina superior derecha, junto a las pestañas
+        self.scope_btn = QPushButton("◎  Scope")
+        self.scope_btn.setCheckable(True)
+        self.scope_btn.setObjectName("scopeBtn")
+        self.scope_btn.setCursor(Qt.PointingHandCursor)
+        self.scope_btn.setAccessibleName("Configurar scope del historial")
+        self.scope_btn.setToolTip(
+            "Define el scope: solo se mostrarán peticiones que coincidan con "
+            "los dominios o URLs configurados")
+        self.scope_btn.clicked.connect(self._open_scope_dialog)
+        corner = QWidget()
+        corner_lay = QHBoxLayout(corner)
+        corner_lay.setContentsMargins(0, 0, 4, 4)
+        corner_lay.addWidget(self.scope_btn)
+        self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
 
         self.add_repeater_tab()  # pestaña inicial vacía en el Repeater
 
@@ -688,23 +713,17 @@ class MainWindow(QMainWindow):
         self.table.setItemDelegate(_BgDelegate(self.table))
 
         action_row = QHBoxLayout()
-        self.to_repeater_btn = QPushButton("Enviar al Repeater →")
+        action_row.setSpacing(6)
+        self.to_repeater_btn = QPushButton("→ Repeater")
         self.to_repeater_btn.setEnabled(False)
+        self.to_repeater_btn.setObjectName("histActionBtn")
+        self.to_repeater_btn.setCursor(Qt.PointingHandCursor)
+        self.to_repeater_btn.setFixedSize(100, 26)
         self.to_repeater_btn.setAccessibleName("Enviar petición seleccionada al Repeater")
         self.to_repeater_btn.setToolTip(
             "Envía la petición seleccionada al Repeater (también con doble clic)")
         self.to_repeater_btn.clicked.connect(self._send_selected_to_repeater)
         action_row.addWidget(self.to_repeater_btn)
-
-        self.scope_btn = QPushButton("▽  Scope")
-        self.scope_btn.setCheckable(True)
-        self.scope_btn.setObjectName("scopeBtn")
-        self.scope_btn.setAccessibleName("Configurar scope del historial")
-        self.scope_btn.setToolTip(
-            "Define el scope: solo se mostrarán peticiones que coincidan con "
-            "los dominios o URLs configurados")
-        self.scope_btn.clicked.connect(self._open_scope_dialog)
-        action_row.addWidget(self.scope_btn)
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Filtrar historial…")
@@ -1073,10 +1092,10 @@ class MainWindow(QMainWindow):
         self.add_repeater_tab(flow)
         self.tabs.setCurrentIndex(2)    # Repeater = índice 2
 
-    def _go_tools(self, sub_idx: int) -> None:
-        """Navega a Tools y activa el sub-tab indicado."""
+    def _go_tools(self, widget) -> None:
+        """Navega a Tools y abre (o enfoca) la herramienta indicada."""
         self.tabs.setCurrentIndex(3)
-        self.fuzzer_tab._tabs.setCurrentIndex(sub_idx)
+        self.fuzzer_tab.open_tool(widget)
 
     def send_to_fuzzer(self, flow: Flow):
         self.fuzzer_tab.load_from_flow(
@@ -1086,12 +1105,12 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(3)    # Tools; load_from_flow ya activa el tab nuevo
 
     def send_to_match_replace(self, flow: Flow):
-        self._go_tools(self._idx_matcher)
+        self._go_tools(self.mr_tab)
         self.mr_tab.open_new_rule_dialog()
 
     def send_to_decoder(self, flow: Flow):
         self.decoder_tab.load_text(decode(flow.raw_request))
-        self._go_tools(self._idx_decoder)
+        self._go_tools(self.decoder_tab)
 
     def _send_flow_to_tool(self, flow: Flow, tool: str):
         if tool == "jwt":
@@ -1103,7 +1122,7 @@ class MainWindow(QMainWindow):
                     break
             if jwt_token:
                 self.decoder_tab.load_jwt(jwt_token)
-                self._go_tools(self._idx_decoder)
+                self._go_tools(self.decoder_tab)
                 return
         self.send_to_fuzzer(flow)
 
@@ -1167,7 +1186,7 @@ class MainWindow(QMainWindow):
                 if os.path.isdir(nssdb) and certutil_bin:
                     r = subprocess.run([
                         certutil_bin, "-d", f"sql:{nssdb}",
-                        "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                        "-A", "-n", "Leetch CA", "-t", "CT,,", "-i", CA_CERT_FILE,
                     ], capture_output=True, timeout=30)
                     ok = r.returncode == 0
                 else:
@@ -1225,7 +1244,7 @@ class MainWindow(QMainWindow):
                         )
                     r = subprocess.run([
                         certutil_bin, "-d", f"sql:{profile_dir}",
-                        "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                        "-A", "-n", "Leetch CA", "-t", "CT,,", "-i", CA_CERT_FILE,
                     ], capture_output=True, timeout=10)
                     if r.returncode == 0:
                         open(flag, "w").close()
@@ -1234,7 +1253,7 @@ class MainWindow(QMainWindow):
                     if os.path.isdir(nssdb):
                         subprocess.run([
                             certutil_bin, "-d", f"sql:{nssdb}",
-                            "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                            "-A", "-n", "Leetch CA", "-t", "CT,,", "-i", CA_CERT_FILE,
                         ], capture_output=True, timeout=10)
             elif sys.platform == "darwin":
                 if not self._ca_keychain_installed():
@@ -1292,7 +1311,7 @@ class MainWindow(QMainWindow):
                 subprocess.Popen(["open", CA_CERT_FILE])
                 msg = (
                     f"Se ha abierto el certificado en Keychain Access.\n\n"
-                    f"Haz doble clic en 'Leech CA' → 'Confiar' → "
+                    f"Haz doble clic en 'Leetch CA' → 'Confiar' → "
                     f"'Al usar este certificado: Confiar siempre'.\n\n"
                     f"Ruta: {CA_CERT_FILE}"
                 )
@@ -1310,7 +1329,7 @@ class MainWindow(QMainWindow):
                 if os.path.isdir(nssdb) and certutil_bin:
                     r = subprocess.run([
                         certutil_bin, "-d", f"sql:{nssdb}",
-                        "-A", "-n", "Leech CA", "-t", "CT,,", "-i", CA_CERT_FILE,
+                        "-A", "-n", "Leetch CA", "-t", "CT,,", "-i", CA_CERT_FILE,
                     ], capture_output=True, timeout=30)
                     if r.returncode == 0:
                         open(self._CA_INSTALLED_FLAG, "w").close()
@@ -1319,14 +1338,14 @@ class MainWindow(QMainWindow):
                         msg = (
                             f"No se pudo instalar automáticamente.\n\n"
                             f"Ejecuta manualmente:\n"
-                            f"  certutil -d sql:{nssdb} -A -n 'Leech CA' -t 'CT,,' -i {CA_CERT_FILE}\n\n"
+                            f"  certutil -d sql:{nssdb} -A -n 'Leetch CA' -t 'CT,,' -i {CA_CERT_FILE}\n\n"
                             f"Ruta del certificado: {CA_CERT_FILE}"
                         )
                 else:
                     msg = (
                         f"Ruta del certificado:\n{CA_CERT_FILE}\n\n"
                         f"Para Chrome/Chromium: instala 'libnss3-tools' y ejecuta:\n"
-                        f"  certutil -d sql:~/.pki/nssdb -A -n 'Leech CA' -t 'CT,,' -i {CA_CERT_FILE}\n\n"
+                        f"  certutil -d sql:~/.pki/nssdb -A -n 'Leetch CA' -t 'CT,,' -i {CA_CERT_FILE}\n\n"
                         f"Para Firefox: Preferencias → Privacidad → Ver certificados → Importar."
                     )
                     try:

@@ -1,4 +1,4 @@
-"""(De)serialización de la sesión de Leech.
+"""(De)serialización de la sesión de Leetch.
 
 Formato del archivo (JSON):
 
@@ -97,7 +97,7 @@ def restore_session(window, data: dict) -> None:
     if not isinstance(data, dict):
         raise ValueError("El archivo no contiene una sesión válida.")
     if data.get("format") != SESSION_FORMAT:
-        raise ValueError("El archivo no es una sesión de Leech.")
+        raise ValueError("El archivo no es una sesión de Leetch.")
     version = data.get("version")
     if version != SESSION_VERSION:
         raise ValueError(f"Versión de sesión no soportada: {version!r}.")

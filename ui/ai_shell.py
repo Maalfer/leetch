@@ -1,4 +1,4 @@
-"""Pestaña IA para Leech.
+"""Pestaña IA para Leetch.
 
 Abre una terminal embebida (pseudo-TTY) con un shell del sistema.
 Al lanzar, escribe CLAUDE.md con el historial HTTP completo y una guía
@@ -166,11 +166,11 @@ class AIShellTab(QWidget):
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         lines = [
-            "# Leech — Contexto para análisis de seguridad",
+            "# Leetch — Contexto para análisis de seguridad",
             f"_Generado automáticamente: {ts}_",
             "",
             "## Herramienta",
-            "**Leech** es un proxy MITM HTTP/HTTPS para pruebas de seguridad.",
+            "**Leetch** es un proxy MITM HTTP/HTTPS para pruebas de seguridad.",
             "Módulos disponibles: Intercept, HTTP History, Repeater, Fuzzer, Match & Replace.",
             "",
         ]
@@ -240,7 +240,7 @@ class AIShellTab(QWidget):
             "- Sugiere payloads concretos para probar en el **Repeater** o el **Fuzzer**.",
             "- Propone reglas de **Match & Replace** útiles para las pruebas.",
             "",
-            "## Comandos de referencia (Leech)",
+            "## Comandos de referencia (Leetch)",
             "- Repeater: reenvío manual de peticiones HTTP",
             "- Fuzzer: fuzzing con wordlists, marcadores §…§ en la petición",
             "- Match & Replace: sustitución automática en petición/respuesta",
@@ -277,7 +277,7 @@ class AIShellTab(QWidget):
         if self._tmpdir:
             self._write_context()
             self._append_output(
-                "\n\033[0m[Leech] Contexto actualizado en CLAUDE.md\n")
+                "\n\033[0m[Leetch] Contexto actualizado en CLAUDE.md\n")
 
     # ------------------------------------------------------------------ #
     # Gestión del proceso / PTY
@@ -308,7 +308,7 @@ class AIShellTab(QWidget):
         # Comando inicial: muestra banner y lanza un shell interactivo
         banner = (
             'echo "┌─────────────────────────────────────────────────┐" && '
-            'echo "│  Leech AI  —  contexto del HTTP History OK  │" && '
+            'echo "│  Leetch AI  —  contexto del HTTP History OK  │" && '
             'echo "└─────────────────────────────────────────────────┘" && '
             'echo "" && '
             f'echo "  Directorio: {cwd}" && '

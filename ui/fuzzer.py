@@ -895,27 +895,36 @@ class FuzzerTab(QWidget):
             tbl.addWidget(btn)
 
         tbl.addStretch()
+        self._toolbar_layout = tbl
         layout.addWidget(tool_bar)
 
         self._tabs = QTabWidget()
-        self._tabs.setTabsClosable(True)
+        self._tabs.setTabsClosable(False)
         self._tabs.tabBar().setExpanding(False)
-        self._tabs.tabCloseRequested.connect(self._close_tab)
         layout.addWidget(self._tabs)
 
-    def _close_tab(self, idx: int):
-        self._tabs.removeTab(idx)
+        self._tool_titles: dict = {}
+
+    def _add_tab(self, widget: QWidget, title: str) -> int:
+        idx = self._tabs.addTab(widget, title)
+        btn = QPushButton("✕")
+        btn.setObjectName("tabCloseBtn")
+        btn.setFixedSize(16, 16)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(lambda checked=False, w=widget: self._tabs.removeTab(self._tabs.indexOf(w)))
+        self._tabs.tabBar().setTabButton(idx, QTabBar.RightSide, btn)
+        return idx
 
     # ── API pública ──────────────────────────────────────────
     def add_fuzzing_tab(self, raw: bytes = b"", use_tls: bool = False) -> FuzzingTab:
         tab = FuzzingTab(use_tls=use_tls, raw=raw)
-        idx = self._tabs.addTab(tab, f"Fuzzing {self._tabs.count() + 1}")
+        idx = self._add_tab(tab, f"Fuzzing {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 
     def add_race_tab(self, raw: bytes = b"", use_tls: bool = False) -> RaceTab:
         tab = RaceTab(use_tls=use_tls, raw=raw)
-        idx = self._tabs.addTab(tab, f"Race {self._tabs.count() + 1}")
+        idx = self._add_tab(tab, f"Race {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 
@@ -923,15 +932,30 @@ class FuzzerTab(QWidget):
         tab = JWTTab()
         if raw:
             tab.load_from_flow(raw, use_tls)
-        idx = self._tabs.addTab(tab, f"JWT {self._tabs.count() + 1}")
+        idx = self._add_tab(tab, f"JWT {self._tabs.count() + 1}")
         self._tabs.setCurrentIndex(idx)
         return tab
 
-    def add_tool_tab(self, widget: QWidget, name: str) -> int:
-        """Añade una pestaña fija (no cerrable) a la barra de herramientas."""
-        idx = self._tabs.addTab(widget, name)
-        self._tabs.tabBar().setTabButton(idx, QTabBar.RightSide, None)
-        self._tabs.tabBar().setTabButton(idx, QTabBar.LeftSide, None)
+    def register_tool(self, button_text: str, widget: QWidget,
+                      tab_name: str | None = None) -> None:
+        """Registra una herramienta singleton como botón en la fila 'Nueva sesión'.
+
+        Al pulsar el botón se abre el widget como pestaña (o se enfoca si ya
+        estaba abierta). El widget se conserva entre cierres y reaperturas.
+        """
+        self._tool_titles[widget] = tab_name or button_text.strip()
+        btn = QPushButton(button_text)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(lambda checked=False, w=widget: self.open_tool(w))
+        # Insertar justo antes del stretch final para que quede tras JWT Auditor
+        self._toolbar_layout.insertWidget(self._toolbar_layout.count() - 1, btn)
+
+    def open_tool(self, widget: QWidget) -> int:
+        """Abre (o enfoca) la pestaña de una herramienta registrada."""
+        idx = self._tabs.indexOf(widget)
+        if idx == -1:
+            idx = self._add_tab(widget, self._tool_titles.get(widget, "Tool"))
+        self._tabs.setCurrentIndex(idx)
         return idx
 
     def load_from_flow(self, raw: bytes, use_tls: bool = False):

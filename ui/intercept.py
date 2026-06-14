@@ -1,4 +1,4 @@
-"""Pestaña Intercept para Leech.
+"""Pestaña Intercept para Leetch.
 
 Permite pausar peticiones HTTP/HTTPS en vuelo, editarlas y decidir
 Forward (reenviar al servidor, con posibles modificaciones) o Drop (descartar).

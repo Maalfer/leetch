@@ -1,4 +1,4 @@
-"""Pestaña Match & Replace para Leech.
+"""Pestaña Match & Replace para Leetch.
 
 Permite definir reglas que se aplican automáticamente a todas las peticiones
 y/o respuestas que pasan por el proxy (regex o texto plano).

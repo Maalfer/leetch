@@ -46,25 +46,25 @@ ui/
 
 ## Orden de pestañas (window.py `_build_ui`)
 
-| Índice | Nombre        | Widget                    |
-|--------|---------------|---------------------------|
-| 0      | Intercept     | InterceptTab              |
-| 1      | HTTP History  | (inline)                  |
-| 2      | Repeater      | RepeaterTab×N             |
-| 3      | Tools         | QTabWidget `tools_tabs`   |
-| 4      | Matcher       | MatchReplaceTab           |
-| 5      | Site Map      | SiteMapTab                |
+| Índice | Nombre        | Widget          |
+|--------|---------------|-----------------|
+| 0      | Intercept     | InterceptTab    |
+| 1      | HTTP History  | (inline)        |
+| 2      | Repeater      | RepeaterTab×N   |
+| 3      | Tools         | FuzzerTab       |
+| 4      | Site Map      | SiteMapTab      |
 
-**Sub-tabs de Tools** (`self.tools_tabs`, objectName `"innerTabWidget"`):
+**Tools (FuzzerTab)** agrupa todas las herramientas. La fila "Nueva sesión:"
+tiene botones que abren pestañas internas en `fuzzer_tab._tabs`:
 
-| Sub-índice | Nombre  | Widget     |
-|------------|---------|------------|
-| 0          | Fuzzer  | FuzzerTab  |
-| 1          | Decoder | DecoderTab |
-| 2          | IA      | AIShellTab |
+- **Fuzzing / Race Conditions / JWT Auditor** → tabs nuevos cerrables (`add_fuzzing_tab`, etc.)
+- **Decoder / IA / Matcher** → herramientas singleton registradas con
+  `fuzzer_tab.register_tool(texto, widget, nombre)`; el botón abre o enfoca su
+  tab con `fuzzer_tab.open_tool(widget)`. Los widgets (`decoder_tab`, `ai_tab`,
+  `mr_tab`) viven en `MainWindow` y se conservan entre cierres/reaperturas.
 
-Para navegar a una pestaña: `self.tabs.setCurrentIndex(N)`.
-Para navegar a un sub-tab de Tools: `self.tabs.setCurrentIndex(3); self.tools_tabs.setCurrentIndex(N)`.
+Para navegar a una herramienta: `self.tabs.setCurrentIndex(3); self.fuzzer_tab.open_tool(self.decoder_tab)`
+(o usa el helper `self._go_tools(widget)`).
 
 ---
 

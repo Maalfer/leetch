@@ -1,4 +1,4 @@
-"""Paleta de colores, fuente monoespaciada y stylesheet QSS de Leech."""
+"""Paleta de colores, fuente monoespaciada y stylesheet QSS de Leetch."""
 from __future__ import annotations
 
 from PySide6.QtGui import QColor, QFont
@@ -213,8 +213,8 @@ QPushButton#tabCloseBtn {{
     background: transparent;
     color: {text_dim};
     border: none;
-    border-radius: 3px;
-    font-size: 13px;
+    border-radius: 4px;
+    font-size: 11px;
     font-weight: bold;
     padding: 0px;
     margin: 0px 2px;
@@ -516,6 +516,26 @@ QPushButton#scopeBtn:checked {{
 QPushButton#scopeBtn:checked:hover {{
     background-color: {accent_hover};
     border-color: {accent_hover};
+}}
+
+QPushButton#histActionBtn {{
+    background-color: {bg_panel};
+    color: {text_dim};
+    border: 1px solid {border};
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 12px;
+    max-width: 100px;
+}}
+QPushButton#histActionBtn:hover {{
+    background-color: {bg_panel_hover};
+    color: {text};
+    border-color: {border_hover};
+}}
+QPushButton#histActionBtn:disabled {{
+    color: #4a505a;
+    background-color: {bg_deep};
+    border-color: {border};
 }}
 
 QPushButton#interceptBtn {{

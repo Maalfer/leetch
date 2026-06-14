@@ -1,4 +1,4 @@
-"""Pestaña Decoder para Leech.
+"""Pestaña Decoder para Leetch.
 
 Transformaciones encadenables (Base64, URL, HTML, Hex, hashes) y
 JWT Inspector con detección de alg:none y re-firma HS256.
@@ -443,7 +443,7 @@ class _JWTTab(QWidget):
 
 # ── Pestaña principal ─────────────────────────────────────────────────────────
 class DecoderTab(QWidget):
-    """Decoder + JWT Inspector para Leech."""
+    """Decoder + JWT Inspector para Leetch."""
 
     def __init__(self):
         super().__init__()

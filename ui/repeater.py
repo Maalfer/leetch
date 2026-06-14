@@ -38,39 +38,9 @@ class RepeaterTab(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        # Fila superior: búsqueda | TLS | Enviar
-        target_row = QHBoxLayout()
-        target_row.setSpacing(8)
-
-        target_row.addWidget(QLabel("Buscar:"))
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Buscar en la petición…")
-        self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setAccessibleName("Buscar en la petición")
-        self.search_edit.setToolTip(
-            "Busca texto dentro de la petición (Enter = siguiente)"
-        )
-        self.search_edit.returnPressed.connect(self._find_next)
-        target_row.addWidget(self.search_edit, 2)
-
-        prev_btn = QPushButton("↑")
-        prev_btn.setObjectName("searchNavBtn")
-        prev_btn.setFixedSize(26, 26)
-        prev_btn.setCursor(Qt.PointingHandCursor)
-        prev_btn.setToolTip("Coincidencia anterior")
-        prev_btn.clicked.connect(self._find_prev)
-        target_row.addWidget(prev_btn)
-
-        next_btn = QPushButton("↓")
-        next_btn.setObjectName("searchNavBtn")
-        next_btn.setFixedSize(26, 26)
-        next_btn.setCursor(Qt.PointingHandCursor)
-        next_btn.setToolTip("Siguiente coincidencia")
-        next_btn.clicked.connect(self._find_next)
-        target_row.addWidget(next_btn)
-
-        target_row.addStretch()
-
+        # Fila superior: solo el botón Enviar a la izquierda
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
         self.send_btn = QPushButton("Enviar")
         self.send_btn.setObjectName("primaryButton")
         self.send_btn.setCursor(Qt.PointingHandCursor)
@@ -78,17 +48,18 @@ class RepeaterTab(QWidget):
         self.send_btn.setToolTip("Envía la petición cruda al destino (Ctrl+Intro)")
         self.send_btn.setShortcut("Ctrl+Return")
         self.send_btn.clicked.connect(self.send)
-        target_row.addWidget(self.send_btn)
-
-        layout.addLayout(target_row)
+        top_row.addWidget(self.send_btn)
+        top_row.addStretch()
+        layout.addLayout(top_row)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(8)
 
+        # Panel petición
         req_box = QWidget()
         req_layout = QVBoxLayout(req_box)
         req_layout.setContentsMargins(0, 0, 0, 0)
-        req_layout.setSpacing(6)
+        req_layout.setSpacing(4)
         req_caption = QLabel("Petición")
         req_caption.setObjectName("paneCaption")
         req_layout.addWidget(req_caption)
@@ -101,12 +72,14 @@ class RepeaterTab(QWidget):
         self.request_edit.customContextMenuRequested.connect(self._show_request_menu)
         HTTPHighlighter(self.request_edit.document())
         req_layout.addWidget(self.request_edit)
+        self._req_search = self._add_search_bar(req_layout, self.request_edit)
         splitter.addWidget(req_box)
 
+        # Panel respuesta
         resp_box = QWidget()
         resp_layout = QVBoxLayout(resp_box)
         resp_layout.setContentsMargins(0, 0, 0, 0)
-        resp_layout.setSpacing(6)
+        resp_layout.setSpacing(4)
         self.resp_label = QLabel("Respuesta")
         self.resp_label.setObjectName("paneCaption")
         resp_layout.addWidget(self.resp_label)
@@ -117,14 +90,69 @@ class RepeaterTab(QWidget):
         self.response_view.setToolTip("Respuesta cruda recibida del destino")
         HTTPHighlighter(self.response_view.document())
         resp_layout.addWidget(self.response_view)
+        self._resp_search = self._add_search_bar(resp_layout, self.response_view)
         splitter.addWidget(resp_box)
 
         splitter.setSizes([500, 500])
         layout.addWidget(splitter)
 
-        self.setTabOrder(self.search_edit, self.send_btn)
         self.setTabOrder(self.send_btn, self.request_edit)
-        self.setTabOrder(self.request_edit, self.response_view)
+        self.setTabOrder(self.request_edit, self._req_search)
+        self.setTabOrder(self._req_search, self.response_view)
+        self.setTabOrder(self.response_view, self._resp_search)
+
+    def _add_search_bar(self, parent_layout: QVBoxLayout,
+                        editor: QPlainTextEdit) -> QLineEdit:
+        """Añade una fila de búsqueda bajo `editor` y devuelve el QLineEdit."""
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        row.setContentsMargins(0, 2, 0, 0)
+
+        search = QLineEdit()
+        search.setObjectName("panelSearch")
+        search.setPlaceholderText("Buscar…")
+        search.setClearButtonEnabled(True)
+        search.setFixedHeight(24)
+
+        prev_btn = QPushButton("↑")
+        prev_btn.setObjectName("searchNavBtn")
+        prev_btn.setFixedSize(24, 24)
+        prev_btn.setCursor(Qt.PointingHandCursor)
+        prev_btn.setToolTip("Coincidencia anterior")
+
+        next_btn = QPushButton("↓")
+        next_btn.setObjectName("searchNavBtn")
+        next_btn.setFixedSize(24, 24)
+        next_btn.setCursor(Qt.PointingHandCursor)
+        next_btn.setToolTip("Siguiente coincidencia")
+
+        search.returnPressed.connect(
+            lambda e=editor, s=search: self._find(e, s, backward=False))
+        next_btn.clicked.connect(
+            lambda checked=False, e=editor, s=search: self._find(e, s, backward=False))
+        prev_btn.clicked.connect(
+            lambda checked=False, e=editor, s=search: self._find(e, s, backward=True))
+
+        row.addWidget(search)
+        row.addWidget(prev_btn)
+        row.addWidget(next_btn)
+        parent_layout.addLayout(row)
+        return search
+
+    def _find(self, editor: QPlainTextEdit, search: QLineEdit, backward: bool):
+        term = search.text()
+        if not term:
+            return
+        flags = (QTextDocument.FindFlag.FindBackward
+                 if backward else QTextDocument.FindFlag(0))
+        if not editor.find(term, flags):
+            cur = editor.textCursor()
+            if backward:
+                cur.movePosition(QTextCursor.MoveOperation.End)
+            else:
+                cur.movePosition(QTextCursor.MoveOperation.Start)
+            editor.setTextCursor(cur)
+            editor.find(term, flags)
 
     def _show_request_menu(self, pos):
         menu = self.request_edit.createStandardContextMenu()
@@ -138,7 +166,6 @@ class RepeaterTab(QWidget):
         menu.exec(self.request_edit.viewport().mapToGlobal(pos))
 
     def _parse_target(self) -> tuple[str, int, bool]:
-        """Extrae host, puerto y TLS del header Host: de la petición actual."""
         raw = self.request_edit.toPlainText().encode("utf-8", "replace")
         headers = hm.parse_headers(raw)
         host_val = headers.get("host", self._host).strip()
@@ -151,26 +178,6 @@ class RepeaterTab(QWidget):
                 pass
         port = self._port if self._port > 0 else 80
         return host_val, port, port in (443, 8443) or self._use_tls
-
-    def _find_next(self):
-        term = self.search_edit.text()
-        if not term:
-            return
-        if not self.request_edit.find(term):
-            cur = self.request_edit.textCursor()
-            cur.movePosition(QTextCursor.MoveOperation.Start)
-            self.request_edit.setTextCursor(cur)
-            self.request_edit.find(term)
-
-    def _find_prev(self):
-        term = self.search_edit.text()
-        if not term:
-            return
-        if not self.request_edit.find(term, QTextDocument.FindFlag.FindBackward):
-            cur = self.request_edit.textCursor()
-            cur.movePosition(QTextCursor.MoveOperation.End)
-            self.request_edit.setTextCursor(cur)
-            self.request_edit.find(term, QTextDocument.FindFlag.FindBackward)
 
     def _emit_send_to(self, tool: str):
         raw_text = self.request_edit.toPlainText()
