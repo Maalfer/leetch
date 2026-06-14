@@ -12,7 +12,7 @@
 ### Linux — repositorio APT (recomendado)
 
 ```bash
-echo "deb [trusted=yes] https://maalfer.github.io/leether stable main" \
+echo "deb [trusted=yes] https://maalfer.github.io/leetch stable main" \
   | sudo tee /etc/apt/sources.list.d/leetch.list
 sudo apt update
 sudo apt install leetch
@@ -20,7 +20,7 @@ sudo apt install leetch
 
 ### Linux — paquete .deb
 
-Descarga el `.deb` de la [última release](https://github.com/maalfer/leether/releases/latest):
+Descarga el `.deb` de la [última release](https://github.com/Maalfer/leetch/releases/latest):
 
 ```bash
 sudo apt install ./leetch_*.deb
@@ -28,11 +28,11 @@ sudo apt install ./leetch_*.deb
 
 ### Windows
 
-Descarga e instala `LeetchSetup-*.exe` desde la [última release](https://github.com/maalfer/leether/releases/latest).
+Descarga e instala `LeetchSetup-*.exe` desde la [última release](https://github.com/Maalfer/leetch/releases/latest).
 
 ### macOS
 
-Descarga `Leetch-*.dmg` desde la [última release](https://github.com/maalfer/leether/releases/latest), ábrelo y arrastra la app a Aplicaciones.
+Descarga `Leetch-*.dmg` desde la [última release](https://github.com/Maalfer/leetch/releases/latest), ábrelo y arrastra la app a Aplicaciones.
 
 ---
 
@@ -41,8 +41,8 @@ Descarga `Leetch-*.dmg` desde la [última release](https://github.com/maalfer/le
 Requiere **Python 3.10+**.
 
 ```bash
-git clone https://github.com/maalfer/leether.git
-cd leether
+git clone https://github.com/Maalfer/leetch.git
+cd leetch
 
 # Crear entorno virtual
 python3 -m venv .venv

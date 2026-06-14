@@ -48,10 +48,10 @@ Package: ${PKG}
 Version: ${VERSION}
 Architecture: ${ARCH}
 Maintainer: maalfer <maalfer59@gmail.com>
-Depends: libgl1, libglib2.0-0, libxkbcommon0, libxkbcommon-x11-0, libxcb-xinerama0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libdbus-1-3, libfontconfig1
+Depends: libgl1, libglib2.0-0, libxkbcommon0, libxkbcommon-x11-0, libxcb-xinerama0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libdbus-1-3, libfontconfig1
 Section: net
 Priority: optional
-Homepage: https://github.com/maalfer/leether
+Homepage: https://github.com/Maalfer/leetch
 Description: Leetch — Proxy MITM HTTP/HTTPS para pentesting
  Herramienta de pentesting web de escritorio inspirada en Burp Suite y Caido.
  Incluye: Intercept, HTTP History, Repeater, Fuzzer (Sniper/Pitchfork/Cluster Bomb),
