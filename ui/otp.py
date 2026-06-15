@@ -1,4 +1,3 @@
-"""OTP Attacker — auditoría completa de mecanismos OTP."""
 from __future__ import annotations
 
 import itertools
@@ -71,8 +70,6 @@ _CHARSETS: dict[str, str] = {
 _MODE_BRUTE   = "Fuerza bruta (todas las combinaciones)"
 _MODE_SPECIAL = "Payloads especiales (fuzzing lógico)"
 
-
-# ── helpers ───────────────────────────────────────────────────
 
 def _status_color(code: str) -> QColor | None:
     s = (code or "").strip()
@@ -152,7 +149,6 @@ def _inject_ip_headers(raw: bytes, names: list[str], ip: str) -> bytes:
 
 def _check_match(status: str, raw_resp: bytes,
                  status_filter: str, grep_text: str, grep_ci: bool) -> bool:
-    """Devuelve True si la respuesta cumple los criterios de detección."""
     if not status_filter and not grep_text:
         return False
     if status_filter:
@@ -179,8 +175,6 @@ def _check_match(status: str, raw_resp: bytes,
     return True
 
 
-# ── worker signal ─────────────────────────────────────────────
-
 class _OTPWorker(QObject):
     result   = Signal(int, str, str, str, int, float, bytes, bytes)
     finished = Signal()
@@ -195,10 +189,7 @@ class _SortItem(QTableWidgetItem):
             return self.text() < other.text()
 
 
-# ══════════════════════════════════════════════════════════════
 class OTPTab(QWidget):
-    """Herramienta de auditoría de mecanismos OTP."""
-
     def __init__(self, use_tls: bool = False, raw: bytes = b""):
         super().__init__()
         self._running      = False
@@ -222,8 +213,6 @@ class OTPTab(QWidget):
         if raw:
             self.request_edit.setPlainText(decode(raw))
 
-    # ── UI principal ──────────────────────────────────────────
-
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -240,7 +229,6 @@ class OTPTab(QWidget):
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         ctrl.addWidget(self.mode_combo)
 
-        # controles específicos de brute force (se ocultan en modo especial)
         self._bf_widget = QWidget()
         bf_lay = QHBoxLayout(self._bf_widget)
         bf_lay.setContentsMargins(0, 0, 0, 0)
@@ -275,7 +263,6 @@ class OTPTab(QWidget):
         ctrl.addWidget(self.start_btn)
         root.addLayout(ctrl)
 
-        # splitter horizontal: izquierda=config, derecha=resultados
         main_split = QSplitter(Qt.Horizontal)
         root.addWidget(main_split, 1)
 
@@ -288,8 +275,6 @@ class OTPTab(QWidget):
         main_split.setSizes([460, 580])
 
         self._update_count_label()
-
-    # ── panel izquierdo ───────────────────────────────────────
 
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
@@ -304,10 +289,8 @@ class OTPTab(QWidget):
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
-        # stack: editor petición / payloads especiales
         self._req_stack = QStackedWidget()
 
-        # página 0: editor normal
         req_page = QWidget()
         rp_lay = QVBoxLayout(req_page)
         rp_lay.setContentsMargins(0, 0, 0, 0)
@@ -333,7 +316,6 @@ class OTPTab(QWidget):
         rp_lay.addLayout(mark_row)
         self._req_stack.addWidget(req_page)
 
-        # página 1: payloads especiales
         sp_page = QWidget()
         sp_lay = QVBoxLayout(sp_page)
         sp_lay.setContentsMargins(0, 0, 0, 0)
@@ -374,15 +356,12 @@ class OTPTab(QWidget):
 
         return w
 
-    # ── panel derecho ─────────────────────────────────────────
-
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        # barra de progreso
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(0)
@@ -390,7 +369,6 @@ class OTPTab(QWidget):
         self.progress_bar.setFixedHeight(14)
         lay.addWidget(self.progress_bar)
 
-        # tabla de resultados
         hdr_row = QHBoxLayout()
         hdr_row.addWidget(QLabel("Resultados:"))
         self.hits_lbl = QLabel("")
@@ -420,10 +398,8 @@ class OTPTab(QWidget):
         self.result_table.itemSelectionChanged.connect(self._on_row_selected)
         lay.addWidget(self.result_table, 2)
 
-        # panel de estadísticas
         lay.addWidget(self._build_stats_panel())
 
-        # visor req/resp
         view_split = QSplitter(Qt.Horizontal)
 
         req_frame = QFrame()
@@ -450,8 +426,6 @@ class OTPTab(QWidget):
 
         lay.addWidget(view_split, 1)
         return w
-
-    # ── panel IP spoofing ─────────────────────────────────────
 
     def _build_ip_panel(self) -> QGroupBox:
         box = QGroupBox("Rotación IP — Rate Limit Bypass")
@@ -560,8 +534,6 @@ class OTPTab(QWidget):
         lay.addWidget(note)
         return box
 
-    # ── panel detección (feature 1) ───────────────────────────
-
     def _build_detection_panel(self) -> QGroupBox:
         box = QGroupBox("Detección automática de OTP válido")
         box.setCheckable(True)
@@ -570,7 +542,6 @@ class OTPTab(QWidget):
         lay = QVBoxLayout(box)
         lay.setSpacing(6)
 
-        # estado
         row1 = QHBoxLayout()
         row1.setSpacing(6)
         row1.addWidget(QLabel("Estado HTTP:"))
@@ -583,7 +554,6 @@ class OTPTab(QWidget):
         row1.addWidget(self.match_status_edit, 1)
         lay.addLayout(row1)
 
-        # grep body
         row2 = QHBoxLayout()
         row2.setSpacing(6)
         row2.addWidget(QLabel("Cuerpo contiene:"))
@@ -595,7 +565,6 @@ class OTPTab(QWidget):
         row2.addWidget(self.match_ci_cb)
         lay.addLayout(row2)
 
-        # opciones
         opts = QHBoxLayout()
         opts.setSpacing(12)
         self.stop_on_hit_cb = QCheckBox("Parar al primer acierto")
@@ -612,15 +581,12 @@ class OTPTab(QWidget):
         lay.addWidget(note)
         return box
 
-    # ── panel estadísticas (feature 6) ───────────────────────
-
     def _build_stats_panel(self) -> QGroupBox:
         box = QGroupBox("Estadísticas en tiempo real")
         lay = QVBoxLayout(box)
         lay.setContentsMargins(8, 4, 8, 6)
         lay.setSpacing(4)
 
-        # fila: estados
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Estados:"))
         self.stats_status_lbl = QLabel("—")
@@ -629,7 +595,6 @@ class OTPTab(QWidget):
         status_row.addWidget(self.stats_status_lbl, 1)
         lay.addLayout(status_row)
 
-        # fila: longitudes (top-5)
         len_row = QHBoxLayout()
         len_row.addWidget(QLabel("Longitudes:"))
         self.stats_len_lbl = QLabel("—")
@@ -638,7 +603,6 @@ class OTPTab(QWidget):
         len_row.addWidget(self.stats_len_lbl, 1)
         lay.addLayout(len_row)
 
-        # fila: anomalías
         anom_row = QHBoxLayout()
         anom_row.addWidget(QLabel("Anomalías:"))
         self.stats_anom_lbl = QLabel("—")
@@ -648,8 +612,6 @@ class OTPTab(QWidget):
         lay.addLayout(anom_row)
 
         return box
-
-    # ── helpers UI ────────────────────────────────────────────
 
     def _on_mode_changed(self, idx: int):
         is_special = (self.mode_combo.currentText() == _MODE_SPECIAL)
@@ -686,7 +648,6 @@ class OTPTab(QWidget):
             self.request_edit_sp.toPlainText().replace(MARKER, ""))
 
     def _update_stats(self):
-        # estados: ordenar de mayor a menor
         if self._stats_status:
             parts = sorted(self._stats_status.items(), key=lambda x: -x[1])
             self.stats_status_lbl.setText(
@@ -695,7 +656,6 @@ class OTPTab(QWidget):
         else:
             self.stats_status_lbl.setText("—")
 
-        # longitudes: top 6 por frecuencia
         if self._stats_length:
             top = sorted(self._stats_length.items(), key=lambda x: -x[1])[:6]
             self.stats_len_lbl.setText(
@@ -703,7 +663,6 @@ class OTPTab(QWidget):
         else:
             self.stats_len_lbl.setText("—")
 
-        # anomalías: longitudes que aparecen muy pocas veces vs la mayoría
         anom_payloads = self._anomaly_rows()
         if anom_payloads:
             self.stats_anom_lbl.setText(
@@ -714,17 +673,13 @@ class OTPTab(QWidget):
             self.stats_anom_lbl.setText("—")
 
     def _anomaly_rows(self) -> list[str]:
-        """Devuelve payloads cuya longitud de respuesta difiere de la moda."""
         if len(self._stats_length) < 2:
             return []
-        # longitud más frecuente = baseline
         baseline = max(self._stats_length, key=lambda k: self._stats_length[k])
         return [
             r["otp"] for r in self._results
             if r["length"] != baseline and r["length"] != 0
         ]
-
-    # ── IP helpers ────────────────────────────────────────────
 
     def _build_ip_pool(self) -> list[str]:
         if self._ip_mode_random.isChecked():
@@ -750,8 +705,6 @@ class OTPTab(QWidget):
         if custom:
             selected.append(custom)
         return selected
-
-    # ── ataque ────────────────────────────────────────────────
 
     def toggle_attack(self):
         if self._running:
@@ -780,7 +733,6 @@ class OTPTab(QWidget):
                 "Marca al menos una cabecera de IP o escribe una personalizada.")
             return
 
-        # construir lista de payloads
         if is_special:
             otp_list = [l for l in self.special_edit.toPlainText().splitlines()]
         else:
@@ -805,7 +757,6 @@ class OTPTab(QWidget):
         self._match_ci     = self.match_ci_cb.isChecked()
         self._stop_on_hit  = self.stop_on_hit_cb.isChecked() and det_enabled
 
-        # reset estado
         self._results.clear()
         self._stats_status.clear()
         self._stats_length.clear()
@@ -885,8 +836,6 @@ class OTPTab(QWidget):
             t.join()
         self._worker.finished.emit()
 
-    # ── slots ─────────────────────────────────────────────────
-
     @Slot(int, str, str, str, int, float, bytes, bytes)
     def _on_result(self, idx: int, otp: str, ip: str, status: str,
                    length: int, ms: float, raw_req: bytes, raw_resp: bytes):
@@ -896,11 +845,9 @@ class OTPTab(QWidget):
             "raw_req": raw_req, "raw_resp": raw_resp,
         })
 
-        # stats
         self._stats_status[status] += 1
         self._stats_length[length] += 1
 
-        # insertar fila
         row = self.result_table.rowCount()
         self.result_table.insertRow(row)
         items = [
@@ -935,7 +882,7 @@ class OTPTab(QWidget):
             if self._stop_on_hit:
                 self._running = False
 
-        # actualizar stats cada 25 resultados para no sobrecargar
+        # actualizar stats cada 25 resultados para no sobrecargar la UI
         if len(self._results) % 25 == 0 or is_hit:
             self._update_stats()
 

@@ -1,8 +1,3 @@
-"""Pestaña Decoder para Leetch.
-
-Transformaciones encadenables (Base64, URL, HTML, Hex, hashes) y
-JWT Inspector con detección de alg:none y re-firma HS256.
-"""
 from __future__ import annotations
 
 import base64
@@ -25,7 +20,6 @@ from ui.style import MONO
 from ui.highlighter import JSONHighlighter
 
 
-# ── Transformaciones ──────────────────────────────────────────────────────────
 def _pad(s: bytes) -> bytes:
     return s + b"=" * ((4 - len(s) % 4) % 4)
 
@@ -73,7 +67,6 @@ def _apply_op(data: bytes, op_name: str, encode: bool) -> bytes:
     return fn_dec(data)
 
 
-# ── Widget de un paso ─────────────────────────────────────────────────────────
 class _StepRow(QFrame):
     def __init__(self, number: int, parent=None):
         super().__init__(parent)
@@ -112,7 +105,6 @@ class _StepRow(QFrame):
         return self.dir_combo.currentIndex() == 1
 
 
-# ── Pestaña Transformar ───────────────────────────────────────────────────────
 class _TransformTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -134,14 +126,12 @@ class _TransformTab(QWidget):
         clear_btn.clicked.connect(lambda: self.input_edit.clear())
         in_hdr.addWidget(clear_btn)
         root.addLayout(in_hdr)
-
         self.input_edit = QPlainTextEdit()
         self.input_edit.setFont(MONO)
         self.input_edit.setFixedHeight(100)
         self.input_edit.setPlaceholderText("Pega aquí el texto a transformar…")
         root.addWidget(self.input_edit)
 
-        # Pasos
         steps_hdr = QHBoxLayout()
         steps_lbl = QLabel("Pasos encadenados")
         steps_lbl.setObjectName("paneCaption")
@@ -163,7 +153,6 @@ class _TransformTab(QWidget):
 
         self._add_step()
 
-        # Botones
         btn_row = QHBoxLayout()
         apply_btn = QPushButton("▶  Aplicar")
         apply_btn.setObjectName("primaryButton")
@@ -181,7 +170,6 @@ class _TransformTab(QWidget):
         self.err_label.setVisible(False)
         root.addWidget(self.err_label)
 
-        # Salida
         out_hdr = QHBoxLayout()
         out_lbl = QLabel("Resultado")
         out_lbl.setObjectName("paneCaption")
@@ -235,7 +223,6 @@ class _TransformTab(QWidget):
         self.err_label.setVisible(False)
 
 
-# ── JWT Inspector ─────────────────────────────────────────────────────────────
 _JWT_RE = _re.compile(
     r'^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)$')
 
@@ -309,7 +296,6 @@ class _JWTTab(QWidget):
 
         root.addWidget(splitter, 1)
 
-        # Controles de re-firma / ataque
         attack_row = QHBoxLayout()
         attack_row.setSpacing(8)
         attack_row.addWidget(QLabel("Secreto:"))
@@ -342,7 +328,6 @@ class _JWTTab(QWidget):
         self.result_edit.setPlaceholderText("El JWT modificado aparecerá aquí…")
         root.addWidget(self.result_edit)
 
-    # ── Parseo ────────────────────────────────────────────────────────────
     def _parse(self) -> None:
         token = self.token_edit.toPlainText().strip()
         m = _JWT_RE.match(token)
@@ -386,7 +371,6 @@ class _JWTTab(QWidget):
         self.warn_label.setText(msg)
         self.warn_label.setVisible(True)
 
-    # ── Generación ────────────────────────────────────────────────────────
     def _get_enc_parts(self) -> tuple[str, str] | None:
         try:
             hdr = json.loads(self.header_edit.toPlainText())
@@ -441,10 +425,7 @@ class _JWTTab(QWidget):
         self._parse()
 
 
-# ── Pestaña principal ─────────────────────────────────────────────────────────
 class DecoderTab(QWidget):
-    """Decoder de transformaciones encadenables para Leetch."""
-
     def __init__(self):
         super().__init__()
         root = QVBoxLayout(self)
@@ -454,5 +435,4 @@ class DecoderTab(QWidget):
         root.addWidget(self._transform)
 
     def load_text(self, text: str) -> None:
-        """Carga texto en la pestaña de transformación."""
         self._transform.load_text(text)

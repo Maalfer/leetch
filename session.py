@@ -68,7 +68,6 @@ def _flow_from_dict(d: dict) -> Flow:
 
 
 def session_to_dict(window) -> dict:
-    """Construye el dict serializable a partir de la ventana principal."""
     repeater = []
     rep_tabs = window.repeater_tabs
     for i in range(rep_tabs.count()):
@@ -93,7 +92,6 @@ def session_to_dict(window) -> dict:
 
 
 def restore_session(window, data: dict) -> None:
-    """Restaura el estado en la ventana a partir de un dict de sesión."""
     if not isinstance(data, dict):
         raise ValueError("El archivo no contiene una sesión válida.")
     if data.get("format") != SESSION_FORMAT:

@@ -1,4 +1,3 @@
-"""Paleta de colores, fuente monoespaciada y stylesheet QSS de Leetch."""
 from __future__ import annotations
 
 from PySide6.QtGui import QColor, QFont
@@ -29,7 +28,6 @@ def decode(data: bytes) -> str:
 
 
 def _unchunk(body: bytes) -> bytes:
-    """Extrae los datos de un cuerpo Transfer-Encoding: chunked."""
     result = b""
     while body:
         crlf = body.find(b"\r\n")
@@ -70,7 +68,6 @@ def _decompress(body: bytes, encoding: str) -> bytes:
 
 
 def decode_http(raw: bytes) -> str:
-    """Decodifica un mensaje HTTP descomprimiendo y desencadenando el cuerpo."""
     if not raw:
         return ""
     if b"\r\n\r\n" not in raw:
@@ -95,7 +92,6 @@ def decode_http(raw: bytes) -> str:
 
 
 def status_color(status: str) -> QColor | None:
-    """Color del texto según la clase del código HTTP."""
     s = (status or "").strip()
     if not s[:1].isdigit():
         return None

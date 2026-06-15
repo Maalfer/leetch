@@ -1,4 +1,3 @@
-"""Site Map — árbol de hosts y rutas del HTTP History."""
 from __future__ import annotations
 
 from typing import Callable
@@ -25,8 +24,6 @@ def _pk(host: str, path: str) -> str:
 
 
 class SiteMapTab(QWidget):
-    """Árbol de hosts/rutas con tabla de flows al hacer clic en un nodo."""
-
     send_to_repeater = Signal(object)
 
     def __init__(self):
@@ -36,7 +33,6 @@ class SiteMapTab(QWidget):
         self._flows_getter: Callable = lambda: []
         self._build_ui()
 
-    # ── API pública ───────────────────────────────────────────────────────
     def set_flows_getter(self, getter: Callable) -> None:
         self._flows_getter = getter
 
@@ -62,7 +58,6 @@ class SiteMapTab(QWidget):
         self.tree.expandAll()
         self._update_count()
 
-    # ── UI ────────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -100,7 +95,6 @@ class SiteMapTab(QWidget):
         self.tree.itemClicked.connect(self._on_node_clicked)
         splitter.addWidget(self.tree)
 
-        # Panel de flows
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -134,7 +128,6 @@ class SiteMapTab(QWidget):
         splitter.setSizes([300, 700])
         root.addWidget(splitter, 1)
 
-    # ── Inserción incremental ─────────────────────────────────────────────
     def _insert(self, flow: Flow) -> None:
         host = flow.host
         try:
@@ -142,7 +135,6 @@ class SiteMapTab(QWidget):
         except Exception:
             path = "/"
 
-        # Nodo host
         hk = _hk(host)
         if hk not in self._tree_items:
             item = QTreeWidgetItem(self.tree, [host])
@@ -155,7 +147,6 @@ class SiteMapTab(QWidget):
         self._node_flows[hk].append(flow)
         self._refresh_item(hk)
 
-        # Nodos de ruta (un nodo por cada prefijo)
         segments = [s for s in path.split("/") if s]
         parent_item = self._tree_items[hk]
         prefix = ""
@@ -208,7 +199,6 @@ class SiteMapTab(QWidget):
 
         item.setForeground(0, color)
 
-    # ── Clic en nodo ──────────────────────────────────────────────────────
     def _on_node_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         key = item.data(0, Qt.UserRole)
         flows = self._node_flows.get(key, [])

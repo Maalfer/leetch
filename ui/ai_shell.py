@@ -1,22 +1,3 @@
-"""Pestaña IA para Leetch.
-
-Abre, al mostrarse, una shell real del sistema embebida (pseudo-TTY) lista para
-lanzar `claude` (Claude Code) o cualquier otra IA de terminal.  Antes de
-arrancar genera un directorio de contexto con:
-
-  - CLAUDE.md          → descripción de Leetch, sus herramientas y el objetivo
-                         de auditoría, más un índice del HTTP History.
-  - http_history/      → un fichero por petición con la request y la response
-                         completas (descomprimidas), para que la IA tenga
-                         acceso total al tráfico interceptado.
-
-La shell arranca en ese directorio, así que `claude` lee CLAUDE.md
-automáticamente y puede inspeccionar http_history/ a voluntad.
-
-El render del terminal usa **pyte** (emulador VT100 en Python puro): mantiene
-la matriz de pantalla real (posicionamiento de cursor, pantalla alternativa,
-colores…) y se vuelca a HTML, por lo que las TUIs como claude se ven bien.
-"""
 from __future__ import annotations
 
 import html as _html
@@ -92,10 +73,6 @@ _SPECIAL_KEYS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Vista de terminal: reenvía pulsaciones crudas al PTY; el contenido se pinta
-# por HTML desde AIShellTab (matriz de pyte).
-# ---------------------------------------------------------------------------
 class _TerminalView(QTextEdit):
     key_bytes = Signal(bytes)
 
@@ -149,12 +126,7 @@ class _TerminalView(QTextEdit):
         menu.exec(self.viewport().mapToGlobal(pos))
 
 
-# ---------------------------------------------------------------------------
-# Pestaña principal
-# ---------------------------------------------------------------------------
 class AIShellTab(QWidget):
-    """Terminal del sistema embebida con contexto del HTTP History para la IA."""
-
     _output_sig = Signal(bytes)
 
     def __init__(self):
@@ -181,13 +153,9 @@ class AIShellTab(QWidget):
         self._ctx_timer.setInterval(4000)
         self._ctx_timer.timeout.connect(self._auto_refresh)
 
-    # ------------------------------------------------------------------ #
     def set_flows_getter(self, getter: Callable) -> None:
         self._flows_getter = getter
 
-    # ------------------------------------------------------------------ #
-    # UI
-    # ------------------------------------------------------------------ #
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -242,9 +210,6 @@ class AIShellTab(QWidget):
         super().resizeEvent(event)
         self._update_winsize()
 
-    # ------------------------------------------------------------------ #
-    # Generación de contexto
-    # ------------------------------------------------------------------ #
     def _flows(self):
         return self._flows_getter() if self._flows_getter else []
 
@@ -362,14 +327,10 @@ class AIShellTab(QWidget):
             self._write_context()
 
     def _notify(self, msg: str):
-        """Inyecta un aviso de Leetch en el flujo del terminal."""
         if self._stream is not None:
             self._stream.feed(f"\r\n\x1b[38;5;208m{msg}\x1b[0m\r\n".encode())
             self._dirty = True
 
-    # ------------------------------------------------------------------ #
-    # Terminal del sistema (externa)
-    # ------------------------------------------------------------------ #
     def _open_system_terminal(self):
         import platform
         import shutil
@@ -401,9 +362,6 @@ class AIShellTab(QWidget):
             return
         self._notify(f"[Leetch] Terminal del sistema abierta en: {cwd}")
 
-    # ------------------------------------------------------------------ #
-    # Gestión del proceso / PTY
-    # ------------------------------------------------------------------ #
     def launch(self):
         if not (_PTY_OK and _PYTE_OK):
             return
@@ -538,9 +496,6 @@ class AIShellTab(QWidget):
                 pass
             self._master_fd = None
 
-    # ------------------------------------------------------------------ #
-    # Render de la matriz de pyte → HTML
-    # ------------------------------------------------------------------ #
     def _render_if_dirty(self):
         if self._dirty:
             self._dirty = False
@@ -597,7 +552,6 @@ class AIShellTab(QWidget):
             css += "font-weight:bold;"
         return f'<span style="{css}">{_html.escape(text, quote=False)}</span>'
 
-    # ------------------------------------------------------------------ #
     def closeEvent(self, event):
         self._kill_process()
         super().closeEvent(event)

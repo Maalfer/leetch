@@ -1,4 +1,3 @@
-"""Envío de peticiones HTTP crudas, usado por el Repeater y el Fuzzer."""
 from __future__ import annotations
 
 import socket
@@ -9,10 +8,6 @@ from net import http_message as hm
 
 def send_raw_request(raw: bytes, host: str, port: int, use_tls: bool,
                      timeout: float = 20.0) -> bytes:
-    """Envía una petición HTTP cruda a host:port y devuelve la respuesta cruda.
-
-    Lanza una excepción si la conexión falla (el llamador la captura).
-    """
     sock = socket.create_connection((host, port), timeout=timeout)
     try:
         if use_tls:

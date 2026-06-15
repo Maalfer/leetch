@@ -1,4 +1,3 @@
-"""Ventana principal de Leetch."""
 from __future__ import annotations
 
 import os
@@ -43,7 +42,6 @@ _LOGO   = str(_ASSETS / "logo.png")
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
 
-# Colores de fondo para las etiquetas del History (tintes visibles sobre fondo oscuro)
 _LABEL_BG: dict[str, str] = {
     "rojo":     "#6b1515",
     "naranja":  "#6b4010",
@@ -55,7 +53,6 @@ _LABEL_BG: dict[str, str] = {
 
 
 class _SortItem(QTableWidgetItem):
-    """QTableWidgetItem con sort_key numérico para ordenar correctamente."""
     def __init__(self, text: str, sort_key=None):
         super().__init__(text)
         self._sort_key = sort_key if sort_key is not None else text
@@ -70,8 +67,6 @@ class _SortItem(QTableWidgetItem):
 
 
 class _BgDelegate(QStyledItemDelegate):
-    """Delegado que pinta el BackgroundRole antes que el QSS global lo pise."""
-
     def paint(self, painter, option, index):
         bg = index.data(Qt.BackgroundRole)
         if bg is not None:
@@ -98,9 +93,6 @@ class FlowBridge(QObject):
     flow_received = Signal(object)
 
 
-# ---------------------------------------------------------------------------
-# Diálogo de ajustes del proxy
-# ---------------------------------------------------------------------------
 class SettingsDialog(QDialog):
     def __init__(self, host: str, port: int, parent=None):
         super().__init__(parent)
@@ -137,11 +129,7 @@ class SettingsDialog(QDialog):
         return self.port_spin.value()
 
 
-# ---------------------------------------------------------------------------
-# Diálogo de scope / filtro de dominio
-# ---------------------------------------------------------------------------
 class ScopeDialog(QDialog):
-    """Modal para definir el scope del HTTP History."""
 
     def __init__(self, entries: list[tuple[str, bool]], parent=None):
         super().__init__(parent)
@@ -254,9 +242,6 @@ class ScopeDialog(QDialog):
         return result
 
 
-# ---------------------------------------------------------------------------
-# Shims para compatibilidad con session.py
-# ---------------------------------------------------------------------------
 class _StrProxy:
     def __init__(self, window: "MainWindow"):
         self._w = window
@@ -279,9 +264,6 @@ class _IntProxy:
         self._w._proxy_port = v
 
 
-# ---------------------------------------------------------------------------
-# Ventana principal
-# ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -310,11 +292,9 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_ui()
-        # Conectar el toggle del intercept al proxy (después de crear la UI)
         self.intercept_tab.toggle_btn.toggled.connect(self._on_intercept_toggle)
         self._start_proxy()
 
-    # Shims para session.py
     @property
     def listen_host(self) -> _StrProxy:
         return _StrProxy(self)
@@ -323,9 +303,6 @@ class MainWindow(QMainWindow):
     def listen_port(self) -> _IntProxy:
         return _IntProxy(self)
 
-    # ------------------------------------------------------------------ #
-    # Menú
-    # ------------------------------------------------------------------ #
     def _build_menu(self):
         menubar = self.menuBar()
 
@@ -393,9 +370,6 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
-    # ------------------------------------------------------------------ #
-    # Sesión
-    # ------------------------------------------------------------------ #
     def save_session(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Guardar sesión", "sesion_leech.json",
@@ -433,9 +407,6 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Sesión cargada",
                                 f"Sesión restaurada desde:\n{path}")
 
-    # ------------------------------------------------------------------ #
-    # Ajustes del proxy
-    # ------------------------------------------------------------------ #
     def show_proxy_settings(self):
         dlg = SettingsDialog(self._proxy_host, self._proxy_port, self)
         if dlg.exec() != QDialog.Accepted:
@@ -473,21 +444,15 @@ class MainWindow(QMainWindow):
                 "Cámbialo en Ajustes → Configuración del proxy.",
             )
 
-    # ------------------------------------------------------------------ #
-    # Intercept
-    # ------------------------------------------------------------------ #
     def _on_intercept_toggle(self, checked: bool):
         if self.proxy:
             self.proxy.intercept_enabled = checked
 
     @Slot(object)
     def _on_intercept_pending(self, pending):
-        self.tabs.setCurrentIndex(0)        # saltar a la pestaña Intercept
+        self.tabs.setCurrentIndex(0)
         self.intercept_tab.on_pending(pending)
 
-    # ------------------------------------------------------------------ #
-    # Ayuda / CA
-    # ------------------------------------------------------------------ #
     def show_help(self):
         text = (
             "<h3>Cómo usar Leetch</h3>"
@@ -551,9 +516,6 @@ class MainWindow(QMainWindow):
         )
         dlg.exec()
 
-    # ------------------------------------------------------------------ #
-    # UI principal
-    # ------------------------------------------------------------------ #
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -564,12 +526,6 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         outer.addWidget(self.tabs)
 
-        #   0 → Intercept
-        #   1 → HTTP History
-        #   2 → Repeater
-        #   3 → Tools  (FuzzerTab; Decoder, IA y Matcher son botones de la fila
-        #               "Nueva sesión", junto a Fuzzing/Race/JWT Auditor)
-        #   4 → Site Map
         self.intercept_tab = InterceptTab()
         self.tabs.addTab(self.intercept_tab, "Intercept")
 
@@ -578,7 +534,6 @@ class MainWindow(QMainWindow):
 
         self.fuzzer_tab = FuzzerTab()
 
-        # Herramientas singleton: botones en la fila "Nueva sesión" de FuzzerTab
         self.decoder_tab = DecoderTab()
         self.fuzzer_tab.register_tool("Decoder", self.decoder_tab, "Decoder")
 
@@ -602,14 +557,13 @@ class MainWindow(QMainWindow):
         self.collaborator_tab = CollaboratorTab()
         self.fuzzer_tab.register_tool("Collaborator", self.collaborator_tab, "Collaborator")
 
-        self.tabs.addTab(self.fuzzer_tab, "Tools")          # índice 3
+        self.tabs.addTab(self.fuzzer_tab, "Tools")
 
-        self.sitemap_tab = SiteMapTab()                     # índice 4
+        self.sitemap_tab = SiteMapTab()
         self.sitemap_tab.set_flows_getter(lambda: self.flows)
         self.sitemap_tab.send_to_repeater.connect(self.send_to_repeater)
         self.tabs.addTab(self.sitemap_tab, "Site Map")
 
-        # Botón de Scope en la esquina superior derecha, junto a las pestañas
         self.scope_btn = QPushButton("◎  Scope")
         self.scope_btn.setCheckable(True)
         self.scope_btn.setObjectName("scopeBtn")
@@ -625,11 +579,10 @@ class MainWindow(QMainWindow):
         corner_lay.addWidget(self.scope_btn)
         self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
 
-        self.add_repeater_tab()  # pestaña inicial vacía en el Repeater
+        self.add_repeater_tab()
 
     def _attach_panel_search(self, layout: QVBoxLayout, title: str,
                               editor: QPlainTextEdit) -> QLineEdit:
-        """Añade una fila [Título] ·· [Buscar…] [N/M] [↑][↓] al layout y devuelve el QLineEdit."""
         from PySide6.QtGui import QTextCharFormat, QColor
         from PySide6.QtWidgets import QTextEdit
 
@@ -821,7 +774,6 @@ class MainWindow(QMainWindow):
         splitter.addWidget(detail)
         splitter.setSizes([300, 500])
 
-        # Barra inferior: buscadores de texto para petición y respuesta
         bottom_row = QHBoxLayout()
         bottom_row.setContentsMargins(0, 4, 0, 0)
         bottom_row.setSpacing(6)
@@ -856,9 +808,6 @@ class MainWindow(QMainWindow):
         rep_layout.addWidget(self.repeater_tabs)
         return container
 
-    # ------------------------------------------------------------------ #
-    # Proxy → tabla
-    # ------------------------------------------------------------------ #
     @Slot(object)
     def add_flow(self, flow: Flow):
         self.flows.append(flow)
@@ -977,7 +926,6 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
-        # Submenú de etiquetas de color
         label_menu = menu.addMenu("Etiquetar")
         clear_label = QAction("Sin etiqueta", self)
         clear_label.triggered.connect(lambda: self._set_flow_label(flow, ""))
@@ -1001,9 +949,6 @@ class MainWindow(QMainWindow):
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
-    # ------------------------------------------------------------------ #
-    # Scope / Filtros del historial
-    # ------------------------------------------------------------------ #
     def _open_scope_dialog(self):
         dlg = ScopeDialog(self._scope_entries, self)
         if dlg.exec() == QDialog.Accepted:
@@ -1086,9 +1031,6 @@ class MainWindow(QMainWindow):
         hdr.setSortIndicator(col, self._sort_order)
         hdr.setSortIndicatorShown(True)
 
-    # ------------------------------------------------------------------ #
-    # Etiquetas y comentarios
-    # ------------------------------------------------------------------ #
     def _row_for_flow_id(self, flow_id: int) -> int:
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
@@ -1138,9 +1080,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "passive_scanner"):
             self.passive_scanner.clear()
 
-    # ------------------------------------------------------------------ #
-    # Copiar como curl
-    # ------------------------------------------------------------------ #
     def _copy_as_curl(self, flow: Flow):
         headers = hm.parse_headers(flow.raw_request)
         parts = ["curl", "-s"]
@@ -1162,9 +1101,6 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(" ".join(parts))
         self.statusBar().showMessage("Comando curl copiado al portapapeles", 3000)
 
-    # ------------------------------------------------------------------ #
-    # Repeater / Fuzzer / Match & Replace
-    # ------------------------------------------------------------------ #
     def add_repeater_tab(self, flow: Flow | None = None) -> RepeaterTab:
         if flow:
             tab = RepeaterTab(
@@ -1191,10 +1127,9 @@ class MainWindow(QMainWindow):
 
     def send_to_repeater(self, flow: Flow):
         self.add_repeater_tab(flow)
-        self.tabs.setCurrentIndex(2)    # Repeater = índice 2
+        self.tabs.setCurrentIndex(2)
 
     def _go_tools(self, widget) -> None:
-        """Navega a Tools y abre (o enfoca) la herramienta indicada."""
         self.tabs.setCurrentIndex(3)
         self.fuzzer_tab.open_tool(widget)
 
@@ -1203,7 +1138,7 @@ class MainWindow(QMainWindow):
             raw=flow.raw_request,
             use_tls=(flow.scheme == "https"),
         )
-        self.tabs.setCurrentIndex(3)    # Tools; load_from_flow ya activa el tab nuevo
+        self.tabs.setCurrentIndex(3)
 
     def send_to_match_replace(self, flow: Flow):
         self._go_tools(self.mr_tab)
@@ -1252,9 +1187,6 @@ class MainWindow(QMainWindow):
             return
         self.send_to_fuzzer(flow)
 
-    # ------------------------------------------------------------------ #
-    # Navegador / CA
-    # ------------------------------------------------------------------ #
     _CA_INSTALLED_FLAG = os.path.join(
         os.path.expanduser("~"), ".leech", "ca_keychain_installed")
 
@@ -1333,7 +1265,6 @@ class MainWindow(QMainWindow):
             t.join(timeout=15)
 
     def _ca_spki_hash(self) -> str | None:
-        """SHA-256 SPKI hash de la CA para --ignore-certificate-errors-spki-list."""
         if not os.path.exists(CA_CERT_FILE):
             return None
         try:
@@ -1350,7 +1281,6 @@ class MainWindow(QMainWindow):
             return None
 
     def _setup_browser_profile(self, profile_dir: str) -> None:
-        """Siembra la CA en el perfil dedicado del navegador (silencioso, sin diálogos)."""
         flag = os.path.join(profile_dir, ".ca_trusted")
         if os.path.exists(flag):
             return

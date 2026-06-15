@@ -1,4 +1,3 @@
-"""APIKeyTab — gestión de la API Key y servidor REST de Leetch."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
@@ -50,8 +49,6 @@ class _LogEmitter(QObject):
 
 
 class APIKeyTab(QWidget):
-    """Pestaña de gestión de la API Key de Leetch."""
-
     def __init__(self):
         super().__init__()
         self._server  = LeetchAPIServer()
@@ -60,7 +57,6 @@ class APIKeyTab(QWidget):
         self._server.log_cb = lambda msg: self._emitter.line.emit(msg)
         self._build_ui()
 
-    # ── UI ────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -248,7 +244,6 @@ class APIKeyTab(QWidget):
         lay.addWidget(clr_btn)
         return box
 
-    # ── helpers ───────────────────────────────────────────────
 
     def _render_example(self) -> str:
         return _EXAMPLE_CURL.format(
@@ -271,7 +266,6 @@ class APIKeyTab(QWidget):
             self.toggle_btn.setText("▶  Iniciar servidor")
             self.port_spin.setEnabled(True)
 
-    # ── slots ─────────────────────────────────────────────────
 
     def _toggle_server(self):
         if self._server.running:
@@ -311,7 +305,6 @@ class APIKeyTab(QWidget):
             cursor.removeSelectedText()
             cursor.deleteChar()
 
-    # ── API pública ───────────────────────────────────────────
 
     def set_flows_getter(self, getter):
         self._server.flows_getter = getter

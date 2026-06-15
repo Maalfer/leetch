@@ -1,4 +1,3 @@
-"""Injection Scanner — SQLi / XSS / LFI en una sola pestaña con selector de tipo."""
 from __future__ import annotations
 
 import re
@@ -21,10 +20,6 @@ from ui.highlighter import HTTPHighlighter
 
 MARKER  = "§"
 _HIT_BG = "#0e2a14"
-
-# ══════════════════════════════════════════════════════════════
-# Payloads
-# ══════════════════════════════════════════════════════════════
 
 _SQLI_PAYLOADS: list[str] = [
     # ── Probes básicos
@@ -250,9 +245,6 @@ _CMDI_PAYLOADS: list[str] = [
     "| cat /etc/shadow",
 ]
 
-# ══════════════════════════════════════════════════════════════
-# Patrones de detección
-# ══════════════════════════════════════════════════════════════
 
 _SQLI_DETECT: list[tuple[str, str]] = [
     (r"SQL syntax.*MySQL",                       "MySQL syntax error"),
@@ -647,18 +639,12 @@ _XSS_KEYS = (b"<script", b"alert(", b"onerror=", b"onload=",
              b"javascript:", b"<svg", b"confirm(", b"prompt(")
 
 
-# ══════════════════════════════════════════════════════════════
-# Worker
-# ══════════════════════════════════════════════════════════════
 class _InjWorker(QObject):
     result   = Signal(object)
     finished = Signal()
     progress = Signal(int, int)
 
 
-# ══════════════════════════════════════════════════════════════
-# InjectionTab — pestaña unificada
-# ══════════════════════════════════════════════════════════════
 class InjectionTab(QWidget):
     def __init__(self, vuln_type: str = "SQLi",
                  raw: bytes = b"", use_tls: bool = False):
@@ -682,7 +668,6 @@ class InjectionTab(QWidget):
         if raw:
             self.request_edit.setPlainText(decode(raw))
 
-    # ── UI ────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -873,7 +858,6 @@ class InjectionTab(QWidget):
         main_split.setSizes([370, 730])
         root.addWidget(main_split, 1)
 
-    # ── tipo / selector ───────────────────────────────────────
 
     def _on_type_changed(self, vuln_type: str):
         if self._running:
@@ -885,7 +869,6 @@ class InjectionTab(QWidget):
         self._active_detect   = [(re.compile(p, re.I | re.S), d) for p, d in detect]
         self.payload_lbl.setText(f"{len(payloads)} payloads integrados")
 
-    # ── marker helpers ────────────────────────────────────────
 
     def _req_ctx_menu(self, pos):
         menu = self.request_edit.createStandardContextMenu()
@@ -907,7 +890,6 @@ class InjectionTab(QWidget):
         self.request_edit.setPlainText(
             self.request_edit.toPlainText().replace(MARKER, ""))
 
-    # ── parsing helpers ───────────────────────────────────────
 
     @staticmethod
     def _find_markers(template: str) -> list[tuple[int, int]]:
@@ -931,7 +913,6 @@ class InjectionTab(QWidget):
         parts.append(template[prev:])
         return "".join(parts)
 
-    # ── detección ─────────────────────────────────────────────
 
     def _detect(self, payload: str, raw_resp: bytes) -> str | None:
         # Buscar en respuesta completa (necesario para CRLF y Open Redirect)
@@ -961,7 +942,6 @@ class InjectionTab(QWidget):
                 return f"SSTI: {payload} → {expected}"
         return None
 
-    # ── control ───────────────────────────────────────────────
 
     def _toggle(self):
         if self._running:
@@ -1086,7 +1066,6 @@ class InjectionTab(QWidget):
             t.join()
         self._worker.finished.emit()
 
-    # ── slots ─────────────────────────────────────────────────
 
     @Slot(object)
     def _on_result(self, entry: dict):
@@ -1117,7 +1096,6 @@ class InjectionTab(QWidget):
             self.detail_req.setPlainText(decode(entry.get("raw_req", b"")))
             self.detail_resp.setPlainText(decode_http(entry.get("raw_resp", b"")))
 
-    # ── helpers ───────────────────────────────────────────────
 
     def _visible(self, entry: dict) -> bool:
         if self.hits_only_chk.isChecked() and not entry["hit"]:
@@ -1187,7 +1165,6 @@ class InjectionTab(QWidget):
         self.progress_bar.setValue(0)
         self.count_lbl.setText("0 resultados")
 
-    # ── API pública ───────────────────────────────────────────
 
     def load_from_flow(self, raw: bytes, use_tls: bool = False,
                        vuln_type: str | None = None):

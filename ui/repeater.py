@@ -1,4 +1,3 @@
-"""Pestaña del Repeater: editor de peticiones HTTP crudas con respuesta en vivo."""
 from __future__ import annotations
 
 import threading
@@ -55,7 +54,6 @@ class RepeaterTab(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(8)
 
-        # Panel petición
         req_box = QWidget()
         req_layout = QVBoxLayout(req_box)
         req_layout.setContentsMargins(0, 0, 0, 0)
@@ -75,7 +73,6 @@ class RepeaterTab(QWidget):
         self._req_search = self._add_search_bar(req_layout, self.request_edit)
         splitter.addWidget(req_box)
 
-        # Panel respuesta
         resp_box = QWidget()
         resp_layout = QVBoxLayout(resp_box)
         resp_layout.setContentsMargins(0, 0, 0, 0)
@@ -103,7 +100,6 @@ class RepeaterTab(QWidget):
 
     def _add_search_bar(self, parent_layout: QVBoxLayout,
                         editor: QPlainTextEdit) -> QLineEdit:
-        """Añade una fila de búsqueda bajo `editor` y devuelve el QLineEdit."""
         row = QHBoxLayout()
         row.setSpacing(4)
         row.setContentsMargins(0, 2, 0, 0)

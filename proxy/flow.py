@@ -1,4 +1,3 @@
-"""Modelo de datos Flow y utilidad de cabeceras HTTP."""
 from __future__ import annotations
 
 import threading
@@ -8,8 +7,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Flow:
-    """Representa una petición interceptada junto a su respuesta."""
-
     id: int
     method: str
     host: str
@@ -39,8 +36,6 @@ class Flow:
 
 
 class PendingRequest:
-    """Petición HTTP retenida en el Intercept hasta que el usuario decide Forward/Drop."""
-
     def __init__(self, raw: bytes, host: str, port: int, scheme: str):
         self.raw = raw
         self.host = host
@@ -64,7 +59,6 @@ class PendingRequest:
 
 
 def set_header(raw: bytes, header: bytes, value: bytes) -> bytes:
-    """Sustituye o añade una cabecera en un mensaje HTTP crudo."""
     head, sep, body = raw.partition(b"\r\n\r\n")
     lines = head.split(b"\r\n")
     hdr_lower = header.lower()

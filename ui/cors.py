@@ -1,4 +1,3 @@
-"""CORSTab — CORS misconfiguration tester."""
 from __future__ import annotations
 
 import threading
@@ -18,7 +17,6 @@ from net import http_message as hm
 from ui.style import MONO, TEXT_DIM, decode, decode_http
 from ui.highlighter import HTTPHighlighter
 
-# ── Severidades ───────────────────────────────────────────────
 _CRITICAL = "CRITICAL"
 _HIGH     = "HIGH"
 _MEDIUM   = "MEDIUM"
@@ -45,7 +43,6 @@ _SEV_BG: dict[str, str] = {
 
 
 def _gen_origins(host: str, scheme: str) -> list[tuple[str, str]]:
-    """Genera la lista de (origin, descripción) a probar."""
     origins: list[tuple[str, str]] = []
 
     base = f"{scheme}://{host}"
@@ -77,7 +74,6 @@ def _gen_origins(host: str, scheme: str) -> list[tuple[str, str]]:
 
 
 def _inject_origin(raw: bytes, origin: str) -> bytes:
-    """Inyecta/reemplaza el header Origin en la petición cruda."""
     if b"\r\n\r\n" not in raw:
         return raw
     head, body = raw.split(b"\r\n\r\n", 1)
@@ -88,7 +84,6 @@ def _inject_origin(raw: bytes, origin: str) -> bytes:
 
 
 def _make_preflight(raw: bytes, origin: str) -> bytes:
-    """Genera una petición OPTIONS preflight a partir de la petición original."""
     if b"\r\n\r\n" not in raw:
         return raw
     head = raw.split(b"\r\n\r\n", 1)[0]
@@ -118,7 +113,6 @@ def _make_preflight(raw: bytes, origin: str) -> bytes:
 
 
 def _parse_cors(raw_resp: bytes) -> dict[str, str]:
-    """Extrae los headers CORS relevantes de la respuesta."""
     if not raw_resp or b"\r\n\r\n" not in raw_resp:
         return {}
     head = raw_resp.split(b"\r\n\r\n", 1)[0]
@@ -150,7 +144,6 @@ def _http_status(raw_resp: bytes) -> str:
 
 
 def _classify(origin_sent: str, cors: dict[str, str]) -> tuple[str, str]:
-    """Devuelve (severidad, descripción) para un resultado CORS."""
     acao = cors.get("acao", "")
     acac = cors.get("acac", "").strip().lower() == "true"
 
@@ -175,18 +168,12 @@ def _classify(origin_sent: str, cors: dict[str, str]) -> tuple[str, str]:
     return _INFO, f"ACAO fijo: {acao}"
 
 
-# ══════════════════════════════════════════════════════════════
-# Worker
-# ══════════════════════════════════════════════════════════════
 class _CORSWorker(QObject):
     result   = Signal(object)
     finished = Signal()
     progress = Signal(int, int)
 
 
-# ══════════════════════════════════════════════════════════════
-# CORSTab
-# ══════════════════════════════════════════════════════════════
 class CORSTab(QWidget):
     def __init__(self, raw: bytes = b"", use_tls: bool = False):
         super().__init__()
@@ -207,7 +194,6 @@ class CORSTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        # ── barra superior ────────────────────────────────────
         top = QHBoxLayout()
         top.setSpacing(8)
 
@@ -248,11 +234,9 @@ class CORSTab(QWidget):
 
         root.addLayout(top)
 
-        # ── splitter principal ────────────────────────────────
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(8)
 
-        # ── panel izquierdo ───────────────────────────────────
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
@@ -281,7 +265,6 @@ class CORSTab(QWidget):
             "https://staging.empresa.com\nhttps://mi-otro-dominio.com")
         ll.addWidget(self.extra_origins)
 
-        # Leyenda de severidades
         legend = QFrame()
         legend.setObjectName("controlBar")
         leg_lay = QHBoxLayout(legend)
@@ -296,13 +279,11 @@ class CORSTab(QWidget):
 
         main_split.addWidget(left)
 
-        # ── panel derecho ─────────────────────────────────────
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
 
-        # Caja de resumen
         self.summary_box = QFrame()
         self.summary_box.setObjectName("controlBar")
         sum_lay = QHBoxLayout(self.summary_box)
@@ -313,11 +294,9 @@ class CORSTab(QWidget):
         sum_lay.addWidget(self.sum_lbl, 1)
         rl.addWidget(self.summary_box)
 
-        # Splitter vertical: tabla + detalle
         vsplit = QSplitter(Qt.Vertical)
         vsplit.setHandleWidth(8)
 
-        # Tabla de resultados
         self.result_table = QTableWidget(0, 6)
         self.result_table.setHorizontalHeaderLabels(
             ["#", "Origin enviado", "ACAO", "ACAC", "Estado", "Severidad"])
@@ -340,7 +319,6 @@ class CORSTab(QWidget):
         self.result_table.itemSelectionChanged.connect(self._on_selection)
         vsplit.addWidget(self.result_table)
 
-        # Detalle petición / respuesta
         detail = QWidget()
         dl = QVBoxLayout(detail)
         dl.setContentsMargins(0, 4, 0, 0)
@@ -373,7 +351,6 @@ class CORSTab(QWidget):
         main_split.setSizes([360, 740])
         root.addWidget(main_split, 1)
 
-    # ── control ───────────────────────────────────────────────
     def _toggle(self):
         if self._running:
             self._running = False
@@ -508,7 +485,6 @@ class CORSTab(QWidget):
             t.join()
         self._worker.finished.emit()
 
-    # ── slots ─────────────────────────────────────────────────
     @Slot(object)
     def _on_result(self, entry: dict):
         self._results.append(entry)
@@ -538,7 +514,6 @@ class CORSTab(QWidget):
         self.detail_req.setPlainText(decode(entry.get("raw_req", b"")))
         self.detail_resp.setPlainText(decode_http(entry.get("raw_resp", b"")))
 
-    # ── helpers ───────────────────────────────────────────────
     def _add_row(self, entry: dict):
         row = self.result_table.rowCount()
         self.result_table.insertRow(row)
@@ -612,7 +587,6 @@ class CORSTab(QWidget):
         self.sum_lbl.setText("Inicia el análisis para ver los resultados de seguridad CORS")
         self.sum_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
 
-    # ── API pública ───────────────────────────────────────────
     def load_from_flow(self, raw: bytes, use_tls: bool = False):
         self._fallback_tls = use_tls
         self.request_edit.setPlainText(decode(raw))

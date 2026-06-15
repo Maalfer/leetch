@@ -1,11 +1,9 @@
-"""Utilidades para leer y parsear mensajes HTTP crudos desde un socket."""
 from __future__ import annotations
 
 import socket
 
 
 def _recv_until_headers(sock: socket.socket) -> bytes:
-    """Lee de un socket hasta encontrar el final de las cabeceras (\r\n\r\n)."""
     data = b""
     while b"\r\n\r\n" not in data:
         try:
@@ -21,7 +19,6 @@ def _recv_until_headers(sock: socket.socket) -> bytes:
 
 
 def _read_exact(sock: socket.socket, buffer: bytes, n: int) -> bytes:
-    """Devuelve al menos `n` bytes acumulando lo que ya hay en `buffer`."""
     data = buffer
     while len(data) < n:
         try:
@@ -35,12 +32,6 @@ def _read_exact(sock: socket.socket, buffer: bytes, n: int) -> bytes:
 
 
 def _read_chunked(sock: socket.socket, buffer: bytes) -> bytes:
-    """Lee un cuerpo con Transfer-Encoding: chunked.
-
-    Devuelve los bytes crudos (marcadores + datos) tal cual viajan por el cable.
-    Usa 'pending' como ventana deslizante para avanzar chunk a chunk; 'out'
-    acumula el resultado. Así nunca reprocesa el mismo size-line.
-    """
     out = b""
     pending = buffer
 
@@ -64,7 +55,6 @@ def _read_chunked(sock: socket.socket, buffer: bytes) -> bytes:
         out += size_line + b"\r\n"
 
         if size == 0:
-            # Chunk final: leer el \r\n de cierre
             while len(pending) < 2:
                 try:
                     more = sock.recv(4096)
@@ -76,7 +66,6 @@ def _read_chunked(sock: socket.socket, buffer: bytes) -> bytes:
             out += pending[:2]
             return out
 
-        # Leer los bytes del chunk + \r\n terminador y avanzar
         needed = size + 2
         while len(pending) < needed:
             try:
@@ -90,15 +79,10 @@ def _read_chunked(sock: socket.socket, buffer: bytes) -> bytes:
             pending += more
 
         out += pending[:needed]
-        pending = pending[needed:]   # avanzar al siguiente chunk
+        pending = pending[needed:]
 
 
 def read_http_message(sock: socket.socket) -> bytes:
-    """Lee un mensaje HTTP completo (cabeceras + cuerpo) de un socket.
-
-    Maneja Content-Length, Transfer-Encoding: chunked y, en su defecto,
-    lee hasta que el socket se cierra.
-    """
     raw = _recv_until_headers(sock)
     if not raw or b"\r\n\r\n" not in raw:
         return raw
@@ -145,7 +129,6 @@ def read_http_message(sock: socket.socket) -> bytes:
 
 
 def parse_request_line(raw: bytes) -> tuple[str, str, str]:
-    """Devuelve (método, target, versión) de la primera línea de una petición."""
     first_line = raw.split(b"\r\n", 1)[0].decode("latin-1", "replace")
     parts = first_line.split(" ", 2)
     if len(parts) == 3:
@@ -154,7 +137,6 @@ def parse_request_line(raw: bytes) -> tuple[str, str, str]:
 
 
 def parse_headers(raw: bytes) -> dict[str, str]:
-    """Devuelve un diccionario con las cabeceras (claves en minúscula)."""
     header_part = raw.split(b"\r\n\r\n", 1)[0]
     lines = header_part.split(b"\r\n")[1:]
     headers: dict[str, str] = {}
@@ -166,7 +148,6 @@ def parse_headers(raw: bytes) -> dict[str, str]:
 
 
 def status_code(raw: bytes) -> str:
-    """Extrae el código de estado de una respuesta HTTP cruda."""
     first_line = raw.split(b"\r\n", 1)[0].decode("latin-1", "replace")
     parts = first_line.split(" ", 2)
     if len(parts) >= 2:

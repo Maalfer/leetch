@@ -1,4 +1,3 @@
-"""Gestión de la CA raíz y certificados de host para MITM HTTPS."""
 from __future__ import annotations
 
 import datetime
@@ -16,7 +15,6 @@ _CERT_DIR = os.path.join(_CA_DIR, "certs")
 
 
 def ensure_ca():
-    """Carga o genera la CA raíz. Seguro para llamar desde cualquier hilo."""
     os.makedirs(_CA_DIR, exist_ok=True)
     os.makedirs(_CERT_DIR, exist_ok=True)
 
@@ -67,7 +65,6 @@ def ensure_ca():
 
 
 def make_host_cert(hostname: str, ca_key, ca_cert) -> tuple[str, str]:
-    """Devuelve (cert_path, key_path) para el hostname, generando si hace falta."""
     safe = hostname.replace("*", "_").replace(":", "_")
     cert_path = os.path.join(_CERT_DIR, f"{safe}.crt")
     key_path = os.path.join(_CERT_DIR, f"{safe}.key")

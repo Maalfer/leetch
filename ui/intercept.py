@@ -1,8 +1,3 @@
-"""Pestaña Intercept para Leetch.
-
-Permite pausar peticiones HTTP/HTTPS en vuelo, editarlas y decidir
-Forward (reenviar al servidor, con posibles modificaciones) o Drop (descartar).
-"""
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -19,23 +14,17 @@ class InterceptBridge(QObject):
 
 
 class InterceptTab(QWidget):
-    """Panel de interceptación: muestra una petición a la vez y gestiona la cola."""
-
     def __init__(self):
         super().__init__()
         self._queue: list[PendingRequest] = []
         self._current: PendingRequest | None = None
         self._build_ui()
 
-    # ------------------------------------------------------------------ #
-    # UI
-    # ------------------------------------------------------------------ #
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        # Fila de controles
         top = QHBoxLayout()
         top.setSpacing(8)
 
@@ -71,7 +60,6 @@ class InterceptTab(QWidget):
 
         root.addLayout(top)
 
-        # Línea de estado
         self.info_label = QLabel(
             "Intercept desactivado — activa el toggle para capturar peticiones en vuelo.")
         self.info_label.setObjectName("paneCaption")
@@ -90,9 +78,6 @@ class InterceptTab(QWidget):
         self.request_edit.setEnabled(False)
         root.addWidget(self.request_edit, 1)
 
-    # ------------------------------------------------------------------ #
-    # Toggle
-    # ------------------------------------------------------------------ #
     def _on_toggle(self, checked: bool):
         self.toggle_btn.setText("Intercept: ON" if checked else "Intercept: OFF")
         if not checked:
@@ -110,9 +95,6 @@ class InterceptTab(QWidget):
             self.info_label.setText(
                 "Intercept activado — esperando la siguiente petición…")
 
-    # ------------------------------------------------------------------ #
-    # Slots y lógica de cola
-    # ------------------------------------------------------------------ #
     @Slot(object)
     def on_pending(self, pending: PendingRequest):
         if self._current is None:
@@ -170,9 +152,6 @@ class InterceptTab(QWidget):
         self.queue_label.setText(
             f"{n} petición{'es' if n != 1 else ''} en cola" if n else "")
 
-    # ------------------------------------------------------------------ #
-    # API pública
-    # ------------------------------------------------------------------ #
     @property
     def is_enabled(self) -> bool:
         return self.toggle_btn.isChecked()

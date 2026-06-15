@@ -1,15 +1,3 @@
-"""Pestaña Comparer para Leetch.
-
-Compara dos textos lado a lado con diff resaltado a nivel de línea o de palabra,
-al estilo del Comparer de Burp Suite.
-
-Paneles de entrada (A y B): editables, con acceso desde el HTTP History.
-Panel de resultados: dos columnas sincronizadas con color por tipo de cambio:
-  - Rojo   → línea/palabra solo en A (eliminada)
-  - Verde  → línea/palabra solo en B (añadida)
-  - Ámbar  → línea/palabra modificada (distinta en ambos)
-  - Normal → contenido igual
-"""
 from __future__ import annotations
 
 import difflib
@@ -26,7 +14,6 @@ from PySide6.QtWidgets import (
 
 from ui.style import MONO, TEXT, TEXT_DIM, BG_DEEP, BG_PANEL, BG_BASE, BORDER
 
-# ── paleta de diff ──────────────────────────────────────────────────────────
 _BG_DEL      = "rgba(255,107,107,0.22)"   # rojo   — solo en A
 _BG_INS      = "rgba(95,211,138,0.22)"    # verde  — solo en B
 _BG_MOD      = "rgba(255,180,84,0.22)"    # ámbar  — diferente en ambos
@@ -50,14 +37,11 @@ def _span(text: str, bg: str = "", extra_css: str = "") -> str:
 
 
 def _line_html(text: str, bg: str) -> str:
-    """Envuelve una línea completa con color de fondo."""
     style = f"display:block;white-space:pre;background-color:{bg};" if bg else "display:block;white-space:pre;"
     return f'<div style="{style}">{_esc(text) or "&nbsp;"}</div>'
 
 
 def _word_diff_html(a: str, b: str) -> tuple[str, str]:
-    """Diff a nivel de token entre dos líneas. Devuelve (html_a, html_b)."""
-    # tokenizar: separar en palabras y separadores para diff fino
     def tokenize(s: str) -> list[str]:
         tokens, cur = [], []
         for ch in s:
@@ -98,11 +82,6 @@ def _word_diff_html(a: str, b: str) -> tuple[str, str]:
 
 def _build_diff_html(text_a: str, text_b: str,
                      mode: str) -> tuple[str, str, dict]:
-    """
-    Genera (html_a, html_b, stats) para la vista de diff.
-    mode: 'lines' | 'words'
-    stats: {'equal': int, 'modified': int, 'deleted': int, 'inserted': int}
-    """
     lines_a = text_a.splitlines(keepends=True)
     lines_b = text_b.splitlines(keepends=True)
 
@@ -171,9 +150,6 @@ def _build_diff_html(text_a: str, text_b: str,
     return html_a, html_b, stats
 
 
-# ---------------------------------------------------------------------------
-# Widget de panel de diff (solo lectura, con scrollbar sincronizable)
-# ---------------------------------------------------------------------------
 class _DiffView(QTextEdit):
     def __init__(self, label: str):
         super().__init__()
@@ -196,19 +172,11 @@ class _DiffView(QTextEdit):
         self._sync_target._syncing = False
 
 
-# ---------------------------------------------------------------------------
-# Pestaña principal
-# ---------------------------------------------------------------------------
 class ComparerTab(QWidget):
-    """Comparer estilo Burp Suite: diff side-by-side con resaltado de cambios."""
-
     def __init__(self):
         super().__init__()
         self._build_ui()
 
-    # ------------------------------------------------------------------ #
-    # API pública — llamada desde window.py
-    # ------------------------------------------------------------------ #
     def load_a(self, text: str) -> None:
         self._edit_a.setPlainText(text)
         self._lbl_a.setText("Texto A  ·  cargado")
@@ -217,15 +185,11 @@ class ComparerTab(QWidget):
         self._edit_b.setPlainText(text)
         self._lbl_b.setText("Texto B  ·  cargado")
 
-    # ------------------------------------------------------------------ #
-    # UI
-    # ------------------------------------------------------------------ #
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        # ── barra de controles ──────────────────────────────────────────
         ctrl = QFrame()
         ctrl.setObjectName("controlBar")
         ctrl_lay = QHBoxLayout(ctrl)
@@ -255,7 +219,6 @@ class ComparerTab(QWidget):
 
         ctrl_lay.addStretch()
 
-        # leyenda
         for hex_color, label in [("#ff6b6b", "Solo en A"), ("#5fd38a", "Solo en B"),
                                   ("#ffb454", "Modificado")]:
             dot = QLabel("  ●  ")
@@ -269,7 +232,6 @@ class ComparerTab(QWidget):
 
         root.addWidget(ctrl)
 
-        # ── paneles de entrada A / B ────────────────────────────────────
         input_split = QSplitter(Qt.Horizontal)
         input_split.setHandleWidth(8)
 
@@ -321,7 +283,6 @@ class ComparerTab(QWidget):
 
         input_split.setSizes([500, 500])
 
-        # ── paneles de resultado ────────────────────────────────────────
         result_widget = QWidget()
         rl = QVBoxLayout(result_widget)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -356,7 +317,6 @@ class ComparerTab(QWidget):
         diff_split.setSizes([500, 500])
         rl.addWidget(diff_split)
 
-        # ── splitter vertical: entrada arriba, diff abajo ───────────────
         vsplit = QSplitter(Qt.Vertical)
         vsplit.setHandleWidth(8)
         vsplit.addWidget(input_split)
@@ -364,12 +324,8 @@ class ComparerTab(QWidget):
         vsplit.setSizes([280, 400])
         root.addWidget(vsplit, 1)
 
-        # placeholder inicial en el panel de diff
         self._show_placeholder()
 
-    # ------------------------------------------------------------------ #
-    # Lógica de diff
-    # ------------------------------------------------------------------ #
     def _compare(self):
         text_a = self._edit_a.toPlainText()
         text_b = self._edit_b.toPlainText()

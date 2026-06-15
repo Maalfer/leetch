@@ -1,4 +1,3 @@
-"""Resaltado de sintaxis HTTP/JSON para QPlainTextEdit."""
 from __future__ import annotations
 import re
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
@@ -49,8 +48,6 @@ _S_BODY  = 2
 
 
 class HTTPHighlighter(QSyntaxHighlighter):
-    """Resalta peticiones y respuestas HTTP crudas (cabeceras + cuerpo JSON)."""
-
     def highlightBlock(self, text: str):
         prev = self.previousBlockState()
 
@@ -104,8 +101,6 @@ class HTTPHighlighter(QSyntaxHighlighter):
 
 
 class JSONHighlighter(QSyntaxHighlighter):
-    """Resalta contenido JSON puro (para vistas de JWT decoded)."""
-
     def highlightBlock(self, text: str):
         _apply_json(self, text)
         self.setCurrentBlockState(0)

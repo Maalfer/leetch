@@ -1,4 +1,3 @@
-"""Scanner Pasivo — analiza cada flow del proxy sin enviar peticiones extra."""
 from __future__ import annotations
 
 import re
@@ -14,8 +13,6 @@ from PySide6.QtWidgets import (
 
 from ui.style import MONO, TEXT_DIM, decode, decode_http
 from ui.highlighter import HTTPHighlighter
-
-# ── Severidad ─────────────────────────────────────────────────
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
@@ -42,10 +39,9 @@ class Finding:
     host: str
     url: str
     detail: str
-    flow: object   # Flow
+    flow: object
 
 
-# ── Helpers de parseo ─────────────────────────────────────────
 
 def _parse_headers(raw: bytes, skip_first_line: bool = True) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
@@ -75,7 +71,6 @@ def _method(raw: bytes) -> str:
         return ""
 
 
-# ── Checks individuales ───────────────────────────────────────
 
 def _check_security_headers(flow) -> list[Finding]:
     findings = []
@@ -325,7 +320,6 @@ def _check_mixed_content(flow) -> list[Finding]:
     return []
 
 
-# ── Registro de checks ────────────────────────────────────────
 
 _CHECKS = [
     _check_security_headers,
@@ -361,18 +355,14 @@ def analyze_flow(flow) -> list[Finding]:
     return findings
 
 
-# ══════════════════════════════════════════════════════════════
-# PassiveScannerTab — UI
-# ══════════════════════════════════════════════════════════════
 
 class PassiveScannerTab(QWidget):
     def __init__(self):
         super().__init__()
         self._findings: list[Finding] = []
-        self._seen: set[tuple] = set()   # dedup
+        self._seen: set[tuple] = set()
         self._build_ui()
 
-    # ── construcción ──────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -449,7 +439,6 @@ class PassiveScannerTab(QWidget):
         splitter.setSizes([380, 220])
         root.addWidget(splitter, 1)
 
-    # ── API pública ───────────────────────────────────────────
 
     def analyze(self, flow) -> None:
         new_findings = analyze_flow(flow)
@@ -483,7 +472,6 @@ class PassiveScannerTab(QWidget):
         for flow in flows:
             self.analyze(flow)
 
-    # ── helpers ───────────────────────────────────────────────
 
     def _visible(self, f: Finding) -> bool:
         sev = self._sev_combo.currentText()

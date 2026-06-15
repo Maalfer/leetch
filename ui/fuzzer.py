@@ -1,4 +1,3 @@
-"""Módulo Fuzzer: contenedor con herramientas Fuzzing, Race Conditions, JWT y OTP."""
 from __future__ import annotations
 
 import base64
@@ -37,7 +36,6 @@ _RED   = "#ff6b6b"
 
 
 class _SortItem(QTableWidgetItem):
-    """Item que ordena numéricamente cuando el texto lo permite."""
     def __lt__(self, other: QTableWidgetItem) -> bool:
         try:
             return float(self.text()) < float(other.text())
@@ -59,7 +57,6 @@ def _status_color(code: str) -> QColor | None:
 
 def _parse_target(raw_text: str, fallback_host: str = "", fallback_port: int = 80,
                   fallback_tls: bool = False) -> tuple[str, int, bool]:
-    """Extrae host, puerto y TLS del header Host: del texto de petición."""
     raw = raw_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8", "replace")
     headers = hm.parse_headers(raw)
     host_val = headers.get("host", fallback_host).strip()
@@ -74,9 +71,7 @@ def _parse_target(raw_text: str, fallback_host: str = "", fallback_port: int = 8
     return host_val, port, port in (443, 8443) or fallback_tls
 
 
-# ──────────────────────────────────────── helpers marcadores ──
 def _parse_markers(template: str) -> list[tuple[int, int]]:
-    """Devuelve lista de (start, end) para cada par §…§ en el template."""
     positions, i = [], 0
     while True:
         start = template.find(MARKER, i)
@@ -91,7 +86,6 @@ def _parse_markers(template: str) -> list[tuple[int, int]]:
 
 
 def _substitute(template: str, markers: list[tuple[int, int]], payloads: list[str]) -> str:
-    """Sustituye cada par §…§ por el payload correspondiente."""
     parts, prev = [], 0
     for (start, end), payload in zip(markers, payloads):
         parts.append(template[prev:start])
@@ -101,7 +95,6 @@ def _substitute(template: str, markers: list[tuple[int, int]], payloads: list[st
     return "".join(parts)
 
 
-# ─────────────────────────────────────────────── helpers JWT ──
 def _b64url_decode(s: str) -> bytes:
     s = s.replace("-", "+").replace("_", "/")
     s += "=" * (-len(s) % 4)
@@ -126,11 +119,7 @@ def _extract_jwt(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-# ══════════════════════════════════════════════════════════════
-# Fuzzing
-# ══════════════════════════════════════════════════════════════
 class _WLRow(QWidget):
-    """Fila de wordlist para una posición de marcador."""
     def __init__(self, label: str, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)
@@ -235,7 +224,6 @@ class FuzzingTab(QWidget):
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(8)
 
-        # Panel izquierdo: petición + wordlist
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
@@ -262,7 +250,6 @@ class FuzzingTab(QWidget):
             row.setVisible(i == 0)
         main_split.addWidget(left)
 
-        # Panel derecho: filtros + tabla + preview req/resp
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -298,7 +285,6 @@ class FuzzingTab(QWidget):
         filter_row.addWidget(self.result_count_label)
         rl.addWidget(filter_frame)
 
-        # Splitter vertical: tabla arriba, preview abajo
         vsplit = QSplitter(Qt.Vertical)
         vsplit.setHandleWidth(8)
 
@@ -323,7 +309,6 @@ class FuzzingTab(QWidget):
         self.result_table.itemSelectionChanged.connect(self._on_selection)
         vsplit.addWidget(self.result_table)
 
-        # Preview req / resp
         preview = QWidget()
         pl = QVBoxLayout(preview)
         pl.setContentsMargins(0, 4, 0, 0)
@@ -605,9 +590,6 @@ class FuzzingTab(QWidget):
         self.request_edit.setPlainText(decode(raw))
 
 
-# ══════════════════════════════════════════════════════════════
-# Race Conditions
-# ══════════════════════════════════════════════════════════════
 class _RaceWorker(QObject):
     result   = Signal(int, str, int, float)
     finished = Signal()
@@ -769,9 +751,6 @@ class RaceTab(QWidget):
         self.request_edit.setPlainText(decode(raw))
 
 
-# ══════════════════════════════════════════════════════════════
-# JWT Auditor
-# ══════════════════════════════════════════════════════════════
 class _JWTWorker(QObject):
     found    = Signal(str)
     progress = Signal(int, int)
@@ -1016,11 +995,7 @@ class JWTTab(QWidget):
             self.token_edit.setText(jwt)
 
 
-# ══════════════════════════════════════════════════════════════
-# Contenedor principal — agrupa las tres herramientas
-# ══════════════════════════════════════════════════════════════
 class FuzzerTab(QWidget):
-    """Pestaña raíz del Fuzzer: contiene sub-pestañas por herramienta."""
 
     def __init__(self):
         super().__init__()
@@ -1028,7 +1003,6 @@ class FuzzerTab(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # ── fila: [lupa + filtro] [scroll con botones] ───────
         self._tool_btns: list[tuple[str, QPushButton]] = []
 
         bar_row = QHBoxLayout()
@@ -1100,7 +1074,6 @@ class FuzzerTab(QWidget):
         self._tabs.tabBar().setTabButton(idx, QTabBar.RightSide, btn)
         return idx
 
-    # ── API pública ──────────────────────────────────────────
     def add_fuzzing_tab(self, raw: bytes = b"", use_tls: bool = False) -> FuzzingTab:
         tab = FuzzingTab(use_tls=use_tls, raw=raw)
         idx = self._add_tab(tab, f"Fuzzing {self._tabs.count() + 1}")
@@ -1142,18 +1115,12 @@ class FuzzerTab(QWidget):
 
     def register_tool(self, button_text: str, widget: QWidget,
                       tab_name: str | None = None) -> None:
-        """Registra una herramienta singleton como botón en la fila 'Nueva sesión'.
-
-        Al pulsar el botón se abre el widget como pestaña (o se enfoca si ya
-        estaba abierta). El widget se conserva entre cierres y reaperturas.
-        """
         self._tool_titles[widget] = tab_name or button_text.strip()
         btn = QPushButton(button_text)
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(lambda checked=False, w=widget: self.open_tool(w))
         self._toolbar_layout.insertWidget(self._toolbar_layout.count() - 1, btn)
         self._tool_btns.append((button_text, btn))
-        # Aplicar filtro activo al nuevo botón
         term = self._tool_filter.text().strip().lower()
         if term:
             btn.setVisible(term in button_text.lower())
@@ -1164,7 +1131,6 @@ class FuzzerTab(QWidget):
             btn.setVisible(not term or term in label.lower())
 
     def open_tool(self, widget: QWidget) -> int:
-        """Abre (o enfoca) la pestaña de una herramienta registrada."""
         idx = self._tabs.indexOf(widget)
         if idx == -1:
             idx = self._add_tab(widget, self._tool_titles.get(widget, "Tool"))
@@ -1172,5 +1138,4 @@ class FuzzerTab(QWidget):
         return idx
 
     def load_from_flow(self, raw: bytes, use_tls: bool = False):
-        """Abre una pestaña de Fuzzing con el flow dado."""
         self.add_fuzzing_tab(raw=raw, use_tls=use_tls)

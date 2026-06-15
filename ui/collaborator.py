@@ -1,4 +1,3 @@
-"""Collaborator — servidor de callbacks OOB: modo Local HTTP y modo interactsh."""
 from __future__ import annotations
 
 import base64
@@ -26,18 +25,12 @@ from PySide6.QtWidgets import (
 
 from ui.style import MONO, TEXT_DIM, ACCENT
 
-# ══════════════════════════════════════════════════════════════
-# Signal bridge (cross-thread → Qt)
-# ══════════════════════════════════════════════════════════════
 
 class _Bridge(QObject):
-    callback  = Signal(object)   # dict con los datos del callback
-    status    = Signal(str)      # mensaje de estado
+    callback  = Signal(object)
+    status    = Signal(str)
 
 
-# ══════════════════════════════════════════════════════════════
-# Utilidades de red
-# ══════════════════════════════════════════════════════════════
 
 def _local_ip() -> str:
     try:
@@ -54,13 +47,8 @@ def _token() -> str:
     return secrets.token_hex(8)
 
 
-# ══════════════════════════════════════════════════════════════
-# Modo 1 — Servidor HTTP local
-# ══════════════════════════════════════════════════════════════
 
 class _LocalServer:
-    """Servidor HTTP embebido que registra todos los callbacks entrantes."""
-
     def __init__(self, port: int, bridge: _Bridge):
         self._port   = port
         self._bridge = bridge
@@ -68,7 +56,6 @@ class _LocalServer:
         self._thread: threading.Thread | None = None
 
     def start(self) -> str:
-        """Arranca el servidor. Devuelve la URL base o lanza excepción."""
         bridge = self._bridge
 
         class _Handler(http.server.BaseHTTPRequestHandler):
@@ -116,9 +103,6 @@ class _LocalServer:
             self._server = None
 
 
-# ══════════════════════════════════════════════════════════════
-# Modo 2 — interactsh
-# ══════════════════════════════════════════════════════════════
 
 _INTERACTSH_SERVERS = [
     "https://interact.sh",
@@ -137,8 +121,6 @@ def _rand_id(n: int) -> str:
 
 
 class _InteractshClient:
-    """Cliente interactsh con cifrado RSA/AES según el protocolo oficial."""
-
     POLL_INTERVAL = 5   # segundos entre polls
 
     def __init__(self, server: str, bridge: _Bridge):
@@ -151,10 +133,8 @@ class _InteractshClient:
         self._secret    = ""
         self._host      = ""
 
-    # ── registro ──────────────────────────────────────────────
 
     def start(self) -> str:
-        """Registra sesión y arranca el hilo de polling. Devuelve el host único."""
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives import serialization
 
@@ -191,7 +171,6 @@ class _InteractshClient:
     def stop(self):
         self._running = False
 
-    # ── polling y descifrado ──────────────────────────────────
 
     def _poll_loop(self):
         url = (f"{self._server}/poll"
@@ -263,9 +242,6 @@ class _InteractshClient:
         })
 
 
-# ══════════════════════════════════════════════════════════════
-# CollaboratorTab — UI principal
-# ══════════════════════════════════════════════════════════════
 
 _PROTO_COLOR = {
     "HTTP":  "#4fc3d6",
@@ -285,7 +261,6 @@ class CollaboratorTab(QWidget):
         self._base_url = ""
         self._build_ui()
 
-    # ── construcción ──────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -445,7 +420,6 @@ class CollaboratorTab(QWidget):
         self._count_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         root.addWidget(self._count_lbl)
 
-    # ── lógica de modo ────────────────────────────────────────
 
     def _on_mode_changed(self, idx: int):
         self._cfg_stack.setCurrentIndex(idx)
@@ -459,7 +433,6 @@ class CollaboratorTab(QWidget):
         ip = _local_ip()
         self._local_url_lbl.setText(f"http://{ip}:{self._port_spin.value()}")
 
-    # ── arranque / parada ────────────────────────────────────
 
     def _toggle(self):
         if self._active:
@@ -511,7 +484,6 @@ class CollaboratorTab(QWidget):
         self._set_status("Parado")
         self._payload_edit.clear()
 
-    # ── generación de payloads ────────────────────────────────
 
     def _gen_payload(self):
         if not self._active:
@@ -525,7 +497,6 @@ class CollaboratorTab(QWidget):
             url  = f"http://{tok}.{host}"
         self._payload_edit.setText(url)
 
-    # ── callbacks entrantes ───────────────────────────────────
 
     @Slot(object)
     def _on_callback(self, cb: dict):
@@ -562,7 +533,6 @@ class CollaboratorTab(QWidget):
         if cb:
             self._detail_edit.setPlainText(cb.get("raw", ""))
 
-    # ── utilidades ────────────────────────────────────────────
 
     def _set_status(self, msg: str, ok: bool = False, error: bool = False):
         if ok:

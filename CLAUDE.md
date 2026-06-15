@@ -237,9 +237,35 @@ Code) con todo el contexto de Leetch y del tráfico interceptado.
 
 ## Convenciones de código
 
-- Sin comentarios obvios. Solo comentar el **por qué** si no es evidente.
 - Señales cross-thread: siempre `Signal(object)` + `@Slot` en el receptor del hilo principal.
 - Prefijo `_` para métodos/atributos privados.
 - Los `lambda` en `triggered.connect` capturan variables con argumentos por defecto cuando es necesario evitar closures tardías: `lambda checked=False, f=flow: ...`
 - `QPlainTextEdit` para HTTP raw (monospace), no `QTextEdit`.
 - Siempre `setFont(MONO)` en editores de texto.
+
+---
+
+## Política de comentarios
+
+**Por defecto: sin comentarios.** Los nombres de funciones, variables y clases deben ser suficientemente descriptivos. Si un comentario solo repite lo que el código ya dice, no añade valor y debe omitirse.
+
+**Añadir un comentario únicamente cuando el WHY es no obvio**, es decir, cuando describe una de estas situaciones:
+
+- **Restricción oculta**: algo que no puede cambiarse sin romper otra cosa (ej. forzar HTTP/1.1 para evitar edge cases de H2 en MITM).
+- **Invariante sutil**: una condición que el lector asumiría incorrectamente (ej. capturar criterios de detección en el hilo principal antes de lanzar el worker).
+- **Workaround de bug específico**: comportamiento intencionalmente raro para sortear un problema externo (ej. `<-loopback>` para anular la regla hardcoded de Chrome).
+- **Comportamiento que sorprendería**: algo que un lector competente probablemente cambiaría si no supiera el motivo (ej. sembrar NSS db para Firefox y Chrome del sistema).
+
+**Nunca escribir**:
+
+- Docstrings de módulo, clase o función que describan qué hace el código (el código lo muestra).
+- Dividers decorativos (`# ──`, `# ══`, `# ---`, `# ===`, etc.) para separar secciones.
+- Etiquetas de sección (`# UI`, `# slots`, `# helpers`, `# API pública`, etc.).
+- Comentarios de layout dentro de `_build_ui` (`# barra superior`, `# panel izquierdo`, etc.).
+- Comentarios que explican pasos obvios del algoritmo (`# ordenar de mayor a menor`, `# insertar fila`, etc.).
+- Trailing comments que repiten el tipo o propósito de una variable (`foo: list = []  # lista de resultados`).
+
+**Conservar siempre**:
+
+- Comentarios con WHY no obvio (ver criterios arriba).
+- Comentarios que documentan el contenido de listas de datos densos (ej. categorías dentro de listas de payloads: `# ── Boolean-based`, `# ── Time-based MySQL`), donde sin el comentario el bloque sería un bloque opaco de strings.

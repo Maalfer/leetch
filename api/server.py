@@ -1,4 +1,3 @@
-"""Servidor HTTP REST de Leetch — acceso programático via API Key."""
 from __future__ import annotations
 
 import base64
@@ -41,16 +40,14 @@ class _Handler(BaseHTTPRequestHandler):
     # Inyectado por LeetchAPIServer antes de arrancar
     api_key:      str = ""
     flows_getter: Callable | None = None
-    log_cb:       Callable | None = None   # callback(line: str)
+    log_cb:       Callable | None = None
 
-    # ── logging ───────────────────────────────────────────────
 
     def log_message(self, fmt, *args):
         line = f"{self.address_string()} — {fmt % args}"
         if self.log_cb:
             self.log_cb(line)
 
-    # ── auth ──────────────────────────────────────────────────
 
     def _authorized(self) -> bool:
         auth = self.headers.get("Authorization", "")
@@ -59,7 +56,6 @@ class _Handler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         return qs.get("api_key", [""])[0] == self.api_key
 
-    # ── respuestas ────────────────────────────────────────────
 
     def _send_json(self, data, status: int = 200):
         body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -78,7 +74,6 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return self.rfile.read(length) if length else b""
 
-    # ── CORS preflight ────────────────────────────────────────
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -87,7 +82,6 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.end_headers()
 
-    # ── GET ───────────────────────────────────────────────────
 
     def do_GET(self):
         if not self._authorized():
@@ -98,7 +92,6 @@ class _Handler(BaseHTTPRequestHandler):
         path   = parsed.path.rstrip("/")
         qs     = parse_qs(parsed.query)
 
-        # GET /api/status
         if path == "/api/status":
             flows = self.flows_getter() if self.flows_getter else []
             self._send_json({
@@ -109,7 +102,6 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
-        # GET /api/flows
         if path == "/api/flows":
             flows  = self.flows_getter() if self.flows_getter else []
             limit  = int(qs.get("limit",  [str(len(flows))])[0])
@@ -135,7 +127,6 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
-        # GET /api/flows/{id}
         if path.startswith("/api/flows/"):
             try:
                 fid = int(path.split("/")[-1])
@@ -152,7 +143,6 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._send_error_json(f"Endpoint no encontrado: {path}", 404)
 
-    # ── POST ──────────────────────────────────────────────────
 
     def do_POST(self):
         if not self._authorized():
@@ -162,7 +152,6 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path   = parsed.path.rstrip("/")
 
-        # POST /api/repeat
         if path == "/api/repeat":
             try:
                 body = self._read_body()
@@ -181,7 +170,6 @@ class _Handler(BaseHTTPRequestHandler):
             raw_req = raw_text.replace("\r\n", "\n").replace("\n", "\r\n")
             raw_req = raw_req.encode("utf-8", "replace")
 
-            # Parsear host del header Host:
             headers  = hm.parse_headers(raw_req)
             host_val = data.get("host") or headers.get("host", "")
             if not host_val:
@@ -225,7 +213,6 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._send_error_json(f"Endpoint no encontrado: {path}", 404)
 
-    # ── DELETE ────────────────────────────────────────────────
 
     def do_DELETE(self):
         if not self._authorized():
@@ -245,14 +232,11 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_error_json(f"Endpoint no encontrado: {path}", 404)
 
 
-# ══════════════════════════════════════════════════════════════
 class LeetchAPIServer:
-    """Servidor REST de Leetch. Singleton gestionado desde APIKeyTab."""
-
     def __init__(self):
         self._server:       HTTPServer | None = None
         self._thread:       Thread | None = None
-        self.api_key:       str = secrets.token_hex(24)   # 48 chars
+        self.api_key:       str = secrets.token_hex(24)
         self.port:          int = 7070
         self.flows_getter:  Callable | None = None
         self.log_cb:        Callable | None = None
@@ -266,7 +250,6 @@ class LeetchAPIServer:
         return f"http://127.0.0.1:{self.port}"
 
     def start(self, port: int | None = None) -> str | None:
-        """Arranca el servidor. Devuelve un mensaje de error o None si ok."""
         if self._server:
             return "El servidor ya está activo."
         if port:

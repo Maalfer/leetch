@@ -1,8 +1,3 @@
-"""Pestaña Match & Replace para Leetch.
-
-Permite definir reglas que se aplican automáticamente a todas las peticiones
-y/o respuestas que pasan por el proxy (regex o texto plano).
-"""
 from __future__ import annotations
 
 import re
@@ -107,16 +102,11 @@ class RuleDialog(QDialog):
 
 
 class MatchReplaceTab(QWidget):
-    """Panel de gestión de reglas Match & Replace."""
-
     def __init__(self):
         super().__init__()
         self._rules: list[Rule] = []
         self._build_ui()
 
-    # ------------------------------------------------------------------ #
-    # UI
-    # ------------------------------------------------------------------ #
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -185,9 +175,6 @@ class MatchReplaceTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection)
         root.addWidget(self.table, 1)
 
-    # ------------------------------------------------------------------ #
-    # Selección
-    # ------------------------------------------------------------------ #
     def _on_selection(self):
         has = bool(self.table.selectedItems())
         self.edit_btn.setEnabled(has)
@@ -197,9 +184,6 @@ class MatchReplaceTab(QWidget):
     def _selected_row(self) -> int:
         return self.table.currentRow()
 
-    # ------------------------------------------------------------------ #
-    # CRUD de reglas
-    # ------------------------------------------------------------------ #
     def _add_rule(self):
         dlg = RuleDialog(parent=self)
         if dlg.exec() != QDialog.Accepted:
@@ -244,9 +228,6 @@ class MatchReplaceTab(QWidget):
         rule.enabled = not rule.enabled
         self._refresh_row(row, rule)
 
-    # ------------------------------------------------------------------ #
-    # Tabla helpers
-    # ------------------------------------------------------------------ #
     def _insert_row(self, rule: Rule):
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -272,9 +253,6 @@ class MatchReplaceTab(QWidget):
         self._count_label.setText(
             f"{n} regla{'s' if n != 1 else ''}  ({active} activa{'s' if active != 1 else ''})")
 
-    # ------------------------------------------------------------------ #
-    # API pública — llamada desde hilo del proxy
-    # ------------------------------------------------------------------ #
     def apply_to_request(self, raw: bytes) -> bytes:
         for rule in list(self._rules):
             if not rule.enabled or rule.scope not in (_SCOPE_REQUEST, _SCOPE_BOTH):
@@ -290,7 +268,6 @@ class MatchReplaceTab(QWidget):
         return raw
 
     def open_new_rule_dialog(self):
-        """Llamado desde el menú contextual del History."""
         self._add_rule()
 
 
